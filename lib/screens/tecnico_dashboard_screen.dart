@@ -1,0 +1,684 @@
+﻿import 'package:flutter/material.dart';
+
+import '../models/asignacion_response.dart';
+import '../models/evidencia.dart';
+import '../services/auth_service.dart';
+import '../services/tecnico_asignaciones_service.dart';
+import '../services/tecnico_auth_service.dart';
+import '../widgets/taller_activo_chip.dart';
+
+class TecnicoDashboardScreen extends StatefulWidget {
+  const TecnicoDashboardScreen({super.key});
+
+  @override
+  State<TecnicoDashboardScreen> createState() => _TecnicoDashboardScreenState();
+}
+
+class _TecnicoDashboardScreenState extends State<TecnicoDashboardScreen> {
+  final TecnicoAsignacionesService _tecnicoService =
+      TecnicoAsignacionesService();
+  final AuthService _authService = AuthService();
+  final TecnicoAuthService _tecnicoAuthService = TecnicoAuthService();
+
+  AsignacionResponse? _asignacion;
+  IncidenteResponse? _incidente;
+  bool _isLoading = true;
+  String? _errorMessage;
+  List<Evidencia> _evidencias = [];
+  bool _loadingEvidencias = false;
+
+  void _log(String message) {
+    debugPrint('[TEC DASH] $message');
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _log('initState -> dashboard tecnico inicializado');
+    _loadAsignacion();
+  }
+
+  @override
+  void dispose() {
+    _tecnicoService.detenerSeguimientoUbicacion();
+    super.dispose();
+  }
+
+  Future<void> _loadAsignacion() async {
+    _log('_loadAsignacion -> INICIO');
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+    });
+
+    try {
+      _log('_loadAsignacion -> solicitando asignacion actual');
+      final asig = await _tecnicoService.getAsignacionActual();
+      if (asig == null) {
+        _log('_loadAsignacion -> sin asignacion activa (null)');
+        setState(() {
+          _asignacion = null;
+          _incidente = null;
+          _isLoading = false;
+        });
+        return;
+      }
+
+      _log(
+        '_loadAsignacion -> asignacion recibida '
+        'idAsignacion=${asig.idAsignacion}, idIncidente=${asig.idIncidente}, '
+        'estado=${asig.estadoAsignacion}',
+      );
+
+      final incidente = asig.incidente;
+      _log(
+        '_loadAsignacion -> incidente embebido '
+        'idIncidente=${incidente.idIncidente}, categoria=${incidente.categoria}, '
+        'prioridad=${incidente.prioridad}',
+      );
+
+      setState(() {
+        _asignacion = asig;
+        _incidente = incidente;
+        _isLoading = false;
+      });
+
+      // El seguimiento GPS en tiempo real solo se activa cuando la asignacion esta en_camino.
+      if (asig.estadoAsignacion == 'en_camino') {
+        _tecnicoService.iniciarSeguimientoUbicacion();
+      } else {
+        _tecnicoService.detenerSeguimientoUbicacion();
+      }
+
+      // Cargar evidencias del incidente
+      _cargarEvidencias(asig.idAsignacion);
+
+      _log('_loadAsignacion -> FIN OK');
+    } catch (e, st) {
+      _log('_loadAsignacion -> ERROR: $e');
+      _log('_loadAsignacion -> STACK: $st');
+      if (e.toString().contains('401')) {
+        _log('_loadAsignacion -> 401 detectado, forzando logout');
+        await _logout();
+        return;
+      }
+      setState(() {
+        _errorMessage = _mapError(e);
+        _isLoading = false;
+      });
+    }
+  }
+
+  String _mapError(dynamic error) {
+    final text = error.toString();
+    _log('_mapError -> raw=$text');
+    if (text.contains('404')) {
+      return 'No hay asignacion actual. Espera a que un taller te asigne.';
+    }
+    if (text.contains('401')) {
+      return 'Sesion expirada. Vuelve a iniciar sesion.';
+    }
+    if (text.contains('409')) {
+      return 'Ya tienes otra asignacion activa. Completala primero.';
+    }
+    if (text.contains('Connection') || text.contains('SocketException')) {
+      return 'Error de conexion. Verifica tu internet.';
+    }
+    return 'Error: $error';
+  }
+
+  Future<void> _cargarEvidencias(int idAsignacion) async {
+    setState(() => _loadingEvidencias = true);
+    final lista = await _tecnicoService.obtenerEvidencias(idAsignacion);
+    // También incluir las que ya vienen embebidas en el incidente
+    final embebidas = _asignacion?.incidente.evidencias ?? [];
+    final todas = [...embebidas];
+    for (final e in lista) {
+      if (!todas.any((x) => x.idEvidencia == e.idEvidencia)) {
+        todas.add(e);
+      }
+    }
+    if (mounted) setState(() { _evidencias = todas; _loadingEvidencias = false; });
+  }
+
+  Future<void> _handleIniciarViaje() async {
+    if (_asignacion == null) return;
+    _log('_handleIniciarViaje -> INICIO idAsignacion=${_asignacion!.idAsignacion} estado=${_asignacion!.estadoAsignacion}');
+
+    try {
+      final updated = await _tecnicoService.iniciarViaje(_asignacion!.idAsignacion);
+      _log('_handleIniciarViaje -> OK nuevoEstado=${updated.estadoAsignacion}');
+      setState(() => _asignacion = updated);
+      _tecnicoService.iniciarSeguimientoUbicacion();
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Viaje iniciado. Compartiendo ubicación en tiempo real.')),
+      );
+    } catch (e, st) {
+      _log('_handleIniciarViaje -> ERROR: $e');
+      _log('_handleIniciarViaje -> STACK: $st');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(_mapError(e))),
+      );
+    }
+  }
+
+  Future<void> _handleCompletar() async {
+    if (_asignacion == null) return;
+    _log('_handleCompletar -> abrir dialogo idAsignacion=${_asignacion!.idAsignacion} estado=${_asignacion!.estadoAsignacion}');
+
+    final resumenController = TextEditingController();
+    final costoController = TextEditingController();
+
+    await showDialog<void>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Completar Servicio'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text('Cobro final (opcional)'),
+              const SizedBox(height: 8),
+              TextField(
+                controller: costoController,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  hintText: 'Ej: 85000',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              const Text('Resumen del trabajo (opcional)'),
+              const SizedBox(height: 8),
+              TextField(
+                controller: resumenController,
+                maxLines: 3,
+                decoration: const InputDecoration(
+                  hintText: 'Describe el trabajo realizado',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancelar'),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                Navigator.pop(context);
+                try {
+                  final costo = double.tryParse(costoController.text.trim());
+                  final resumen = resumenController.text.trim().isEmpty
+                      ? null
+                      : resumenController.text.trim();
+
+                  _log('_handleCompletar -> enviando completar costo=$costo resumenLen=${resumen?.length ?? 0}');
+
+                  final updated = await _tecnicoService.completar(
+                    _asignacion!.idAsignacion,
+                    costoFinal: costo,
+                    resumenTrabajo: resumen,
+                  );
+                  _log('_handleCompletar -> OK nuevoEstado=${updated.estadoAsignacion}');
+                  setState(() => _asignacion = updated);
+                  _tecnicoService.detenerSeguimientoUbicacion();
+
+                  if (!mounted) return;
+                  // ignore: use_build_context_synchronously
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Servicio completado.')),
+                  );
+                } catch (e, st) {
+                  _log('_handleCompletar -> ERROR: $e');
+                  _log('_handleCompletar -> STACK: $st');
+                  if (!mounted) return;
+                  // ignore: use_build_context_synchronously
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text(_mapError(e))),
+                  );
+                }
+              },
+              child: const Text('Confirmar'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _confirmLogout() async {
+    final confirmar = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Cerrar sesion'),
+        content: const Text('Estas seguro de que deseas cerrar sesion?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancelar'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Cerrar sesion'),
+          ),
+        ],
+      ),
+    );
+    if (confirmar == true) {
+      await _logout();
+    }
+  }
+
+  Future<void> _logout() async {
+    _log('_logout -> limpiando sesiones tecnico/general');
+    await _tecnicoAuthService.logout();
+    await _authService.logout();
+    _log('_logout -> completado, navegando a /login');
+    if (!mounted) return;
+    Navigator.pushReplacementNamed(context, '/login');
+  }
+
+  Color _getColorForEstado(String estado) {
+    switch (estado) {
+      case 'pendiente':
+        return Colors.grey;
+      case 'aceptada':
+        return Colors.green;
+      case 'en_camino':
+        return Colors.blue;
+      case 'completada':
+        return Colors.teal;
+      default:
+        return Colors.grey;
+    }
+  }
+
+  IconData _getIconForEstado(String estado) {
+    switch (estado) {
+      case 'pendiente':
+        return Icons.schedule;
+      case 'aceptada':
+        return Icons.check_circle;
+      case 'en_camino':
+        return Icons.directions_car;
+      case 'completada':
+        return Icons.done_all;
+      default:
+        return Icons.help;
+    }
+  }
+
+  Widget _buildActionButtons() {
+    if (_asignacion == null) return const SizedBox.shrink();
+
+    switch (_asignacion!.estadoAsignacion) {
+      case 'pendiente':
+        return Card(
+          color: Colors.grey[200],
+          child: const Padding(
+            padding: EdgeInsets.all(12),
+            child: Text(
+              'Esperando que el taller acepte la asignacion...',
+              textAlign: TextAlign.center,
+            ),
+          ),
+        );
+
+      case 'aceptada':
+        return SizedBox(
+          width: double.infinity,
+          child: ElevatedButton.icon(
+            onPressed: _handleIniciarViaje,
+            icon: const Icon(Icons.directions_car),
+            label: const Text('Iniciar Viaje'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.orange,
+              foregroundColor: Colors.white,
+            ),
+          ),
+        );
+
+      case 'en_camino':
+        return SizedBox(
+          width: double.infinity,
+          child: ElevatedButton.icon(
+            onPressed: _handleCompletar,
+            icon: const Icon(Icons.check_circle),
+            label: const Text('Completar Servicio'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.green,
+              foregroundColor: Colors.white,
+            ),
+          ),
+        );
+
+      case 'completada':
+        return Card(
+          color: Colors.green[50],
+          child: const Padding(
+            padding: EdgeInsets.all(12),
+            child: Text(
+              'Servicio completado. El cliente puede evaluar tu trabajo.',
+              textAlign: TextAlign.center,
+            ),
+          ),
+        );
+
+      default:
+        return Text('Estado desconocido: ${_asignacion!.estadoAsignacion}');
+    }
+  }
+
+  Widget _buildEvidencias() {
+    if (_loadingEvidencias) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 8),
+        child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+      );
+    }
+
+    if (_evidencias.isEmpty) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 4),
+        child: Text(
+          'El cliente no subió evidencias.',
+          style: TextStyle(color: Colors.grey),
+        ),
+      );
+    }
+
+    return Column(
+      children: _evidencias.map((e) => _buildEvidenciaItem(e)).toList(),
+    );
+  }
+
+  Widget _buildEvidenciaItem(Evidencia ev) {
+    if (ev.esImagen) {
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 8),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(8),
+          child: Image.network(
+            ev.urlArchivo,
+            height: 180,
+            width: double.infinity,
+            fit: BoxFit.cover,
+            errorBuilder: (context, error, stackTrace) => Container(
+              height: 80,
+              color: Colors.grey[200],
+              child: const Center(child: Icon(Icons.broken_image, color: Colors.grey)),
+            ),
+          ),
+        ),
+      );
+    }
+
+    if (ev.esAudio) {
+      return ListTile(
+        contentPadding: EdgeInsets.zero,
+        leading: const CircleAvatar(
+          backgroundColor: Colors.orange,
+          child: Icon(Icons.mic, color: Colors.white),
+        ),
+        title: const Text('Audio del cliente'),
+        subtitle: ev.transcripcionAudio != null
+            ? Text(ev.transcripcionAudio!, maxLines: 2, overflow: TextOverflow.ellipsis)
+            : null,
+      );
+    }
+
+    // Texto / descripción IA
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      leading: const CircleAvatar(
+        backgroundColor: Colors.blue,
+        child: Icon(Icons.description, color: Colors.white),
+      ),
+      title: const Text('Descripción adicional'),
+      subtitle: ev.descripcionIa != null ? Text(ev.descripcionIa!) : null,
+    );
+  }
+
+  Widget _buildGpsIndicator() {
+    if (_asignacion?.estadoAsignacion != 'en_camino') return const SizedBox.shrink();
+    return Card(
+      color: Colors.blue[50],
+      child: const Padding(
+        padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        child: Row(
+          children: [
+            Icon(Icons.location_on, color: Colors.blue, size: 18),
+            SizedBox(width: 8),
+            Text(
+              'Compartiendo ubicación en tiempo real',
+              style: TextStyle(color: Colors.blue, fontSize: 13),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    _log(
+      'build -> isLoading=$_isLoading, error=${_errorMessage != null}, '
+      'hasAsignacion=${_asignacion != null}, '
+      'estado=${_asignacion?.estadoAsignacion ?? 'null'}',
+    );
+
+    if (_isLoading) {
+      return Scaffold(
+        appBar: AppBar(title: const Text('Mi Asignacion')),
+        body: const Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    if (_errorMessage != null) {
+      return Scaffold(
+        appBar: AppBar(title: const Text('Mi Asignacion')),
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(_errorMessage!, textAlign: TextAlign.center),
+                const SizedBox(height: 16),
+                Wrap(
+                  alignment: WrapAlignment.center,
+                  spacing: 12,
+                  runSpacing: 8,
+                  children: [
+                    ElevatedButton(
+                      onPressed: _loadAsignacion,
+                      style: ElevatedButton.styleFrom(
+                        minimumSize: const Size(140, 48),
+                      ),
+                      child: const Text('Reintentar'),
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: _logout,
+                      style: OutlinedButton.styleFrom(
+                        minimumSize: const Size(140, 48),
+                      ),
+                      icon: const Icon(Icons.logout),
+                      label: const Text('Cerrar sesion'),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    if (_asignacion == null) {
+      return Scaffold(
+        appBar: AppBar(
+          title: const Text('Mi Asignacion'),
+          actions: [
+            const TallerActivoChip(),
+            IconButton(
+              icon: const Icon(Icons.notifications),
+              onPressed: () => Navigator.pushNamed(context, '/notificaciones'),
+              tooltip: 'Notificaciones',
+            ),
+            IconButton(icon: const Icon(Icons.refresh), onPressed: _loadAsignacion),
+            IconButton(
+              icon: const Icon(Icons.logout),
+              onPressed: _confirmLogout,
+              tooltip: 'Cerrar sesion',
+            ),
+          ],
+        ),
+        body: const Center(
+          child: Text('No hay asignacion pendiente en este momento.'),
+        ),
+      );
+    }
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Mi Asignacion Actual'),
+        actions: [
+          const TallerActivoChip(),
+          IconButton(
+            icon: const Icon(Icons.notifications),
+            onPressed: () => Navigator.pushNamed(context, '/notificaciones'),
+            tooltip: 'Notificaciones',
+          ),
+          IconButton(icon: const Icon(Icons.refresh), onPressed: _loadAsignacion),
+          IconButton(
+            icon: const Icon(Icons.logout),
+            onPressed: _confirmLogout,
+            tooltip: 'Cerrar sesion',
+          ),
+        ],
+      ),
+      body: RefreshIndicator(
+        onRefresh: _loadAsignacion,
+        child: SingleChildScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Card(
+                color: _getColorForEstado(_asignacion!.estadoAsignacion),
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text('Estado', style: TextStyle(color: Colors.white70)),
+                          Text(
+                            _asignacion!.estadoAsignacion.toUpperCase(),
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 20,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
+                      ),
+                      Icon(
+                        _getIconForEstado(_asignacion!.estadoAsignacion),
+                        size: 40,
+                        color: Colors.white,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              if (_asignacion!.etaMinutos != null)
+                Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Text('ETA: ${_asignacion!.etaMinutos} minutos'),
+                  ),
+                ),
+              const SizedBox(height: 16),
+              Text('Detalle del Incidente', style: Theme.of(context).textTheme.titleMedium),
+              const SizedBox(height: 8),
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('👤 Cliente', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.grey)),
+                      Text(
+                        _incidente?.usuario?['nombre'] ?? _asignacion!.incidente.usuario?['nombre'] ?? 'Nombre no disponible',
+                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                      ),
+                      if ((_incidente?.usuario?['telefono'] ?? _asignacion!.incidente.usuario?['telefono']) != null)
+                        Text('Tel: ${_incidente?.usuario?['telefono'] ?? _asignacion!.incidente.usuario?['telefono']}'),
+                      
+                      const Divider(),
+                      
+                      const Text('🚗 Vehículo', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.grey)),
+                      Row(
+                        children: [
+                          Text(
+                            _incidente?.vehiculo?['placa'] ?? _asignacion!.incidente.vehiculo?['placa'] ?? 'Placa N/A',
+                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.blue),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              '${_incidente?.vehiculo?['marca'] ?? _asignacion!.incidente.vehiculo?['marca'] ?? ''} ${_incidente?.vehiculo?['modelo'] ?? _asignacion!.incidente.vehiculo?['modelo'] ?? ''}',
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
+                      ),
+                      if ((_incidente?.vehiculo?['color'] ?? _asignacion!.incidente.vehiculo?['color']) != null)
+                        Text('Color: ${_incidente?.vehiculo?['color'] ?? _asignacion!.incidente.vehiculo?['color']}'),
+                        
+                      const Divider(),
+                      const Text('⚠️ Problema', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.grey)),
+                      Text('Categoria: ${_incidente?.categoria ?? _asignacion!.incidente.categoria}'),
+                      Text('Prioridad: ${_incidente?.prioridad ?? _asignacion!.incidente.prioridad}'),
+                      const SizedBox(height: 4),
+                      const Text('Descripcion:', style: TextStyle(fontWeight: FontWeight.bold)),
+                      Text(_incidente?.descripcionUsuario ?? _asignacion!.incidente.descripcionUsuario),
+                      if ((_incidente?.resumenIa ?? _asignacion!.incidente.resumenIa) != null) ...[
+                        const SizedBox(height: 8),
+                        const Text('Analisis IA:', style: TextStyle(fontWeight: FontWeight.bold)),
+                        Text((_incidente?.resumenIa ?? _asignacion!.incidente.resumenIa)!),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              _buildGpsIndicator(),
+              const SizedBox(height: 16),
+              Text('Evidencias del Cliente', style: Theme.of(context).textTheme.titleMedium),
+              const SizedBox(height: 8),
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: _buildEvidencias(),
+                ),
+              ),
+              const SizedBox(height: 24),
+              _buildActionButtons(),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
