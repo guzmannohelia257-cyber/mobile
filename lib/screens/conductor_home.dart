@@ -88,11 +88,23 @@ class _ConductorHomeScreenState extends State<ConductorHomeScreen> {
     final resultado = await vehiculoService.listarMisVehiculos();
     if (!mounted) return;
 
-    if (resultado['success']) {
+    if (resultado['success'] == true) {
       final vehiculos = List<Map<String, dynamic>>.from(
         (resultado['vehiculos'] as List? ?? [])
             .map((v) => Map<String, dynamic>.from(v as Map)),
       );
+
+      // Si los vehiculos vienen de la cache (sin conexion), avisamos que la
+      // emergencia se enviara al reconectar, pero permitimos empezar igual.
+      if (resultado['offline'] == true) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Sin conexion: usando tus vehiculos guardados. La emergencia se enviara al reconectar.',
+            ),
+          ),
+        );
+      }
 
       Navigator.push(
         context,
@@ -101,6 +113,7 @@ class _ConductorHomeScreenState extends State<ConductorHomeScreen> {
         ),
       );
     } else {
+      // resultado['error'] ya es un mensaje amable (no expone excepciones).
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(resultado['error'] ?? 'Error al cargar vehículos'),

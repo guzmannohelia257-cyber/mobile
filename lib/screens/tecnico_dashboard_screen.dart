@@ -9,6 +9,7 @@ import '../services/realtime_service.dart';
 import '../services/tecnico_asignaciones_service.dart';
 import '../services/tecnico_auth_service.dart';
 import '../widgets/taller_activo_chip.dart';
+import 'tecnico_ruta_screen.dart';
 
 class TecnicoDashboardScreen extends StatefulWidget {
   const TecnicoDashboardScreen({super.key});
@@ -31,6 +32,9 @@ class _TecnicoDashboardScreenState extends State<TecnicoDashboardScreen> {
   String? _errorMessage;
   List<Evidencia> _evidencias = [];
   bool _loadingEvidencias = false;
+  // Evita dobles envios (doble toque o recarga por realtime) que dispararian
+  // una segunda transicion de estado ya invalida en el backend (400).
+  bool _accionEnCurso = false;
 
   void _log(String message) {
     debugPrint('[TEC DASH] $message');
@@ -160,9 +164,23 @@ class _TecnicoDashboardScreenState extends State<TecnicoDashboardScreen> {
   }
 
   Future<void> _handleIniciarViaje() async {
-    if (_asignacion == null) return;
+    // Guard: si ya hay una accion en curso (o no hay asignacion) ignoramos el
+    // toque. Asi un segundo toque no dispara una 2a llamada que llegaria cuando
+    // la asignacion ya esta en 'en_camino' (el backend responderia 400).
+    if (_accionEnCurso || _asignacion == null) return;
+
+    // Defensivo: si la asignacion ya no esta 'aceptada' (p.ej. se inicio por
+    // otra via o el realtime aun no refresco), recargamos y salimos en vez de
+    // reintentar una transicion invalida.
+    if (_asignacion!.estadoAsignacion != 'aceptada') {
+      _log('_handleIniciarViaje -> estado!=aceptada (${_asignacion!.estadoAsignacion}), recargando');
+      await _loadAsignacion();
+      return;
+    }
+
     _log('_handleIniciarViaje -> INICIO idAsignacion=${_asignacion!.idAsignacion} estado=${_asignacion!.estadoAsignacion}');
 
+    setState(() => _accionEnCurso = true);
     try {
       final updated = await _tecnicoService.iniciarViaje(_asignacion!.idAsignacion);
       _log('_handleIniciarViaje -> OK nuevoEstado=${updated.estadoAsignacion}');
@@ -177,14 +195,29 @@ class _TecnicoDashboardScreenState extends State<TecnicoDashboardScreen> {
       _log('_handleIniciarViaje -> ERROR: $e');
       _log('_handleIniciarViaje -> STACK: $st');
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(_mapError(e))),
-      );
+      // Si el error indica que la asignacion ya no esta 'aceptada' (la 1a
+      // llamada SI funciono y ya esta 'en_camino'), no mostramos error feo:
+      // el viaje ya esta iniciado, solo recargamos en silencio.
+      final raw = e.toString().toLowerCase();
+      if (raw.contains('iniciar viaje') ||
+          raw.contains('en_camino') ||
+          raw.contains('aceptada')) {
+        _log('_handleIniciarViaje -> transicion ya aplicada, recargando silenciosamente');
+        await _loadAsignacion();
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(_mapError(e))),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _accionEnCurso = false);
     }
   }
 
   Future<void> _handleCompletar() async {
-    if (_asignacion == null) return;
+    // Mismo guard que en iniciar viaje: evita abrir el dialogo o reenviar
+    // mientras ya hay una accion en curso.
+    if (_accionEnCurso || _asignacion == null) return;
     _log('_handleCompletar -> abrir dialogo idAsignacion=${_asignacion!.idAsignacion} estado=${_asignacion!.estadoAsignacion}');
 
     final resumenController = TextEditingController();
@@ -228,7 +261,10 @@ class _TecnicoDashboardScreenState extends State<TecnicoDashboardScreen> {
             ),
             ElevatedButton(
               onPressed: () async {
+                // Guard contra dobles envios al confirmar el dialogo.
+                if (_accionEnCurso) return;
                 Navigator.pop(context);
+                setState(() => _accionEnCurso = true);
                 try {
                   final costo = double.tryParse(costoController.text.trim());
                   final resumen = resumenController.text.trim().isEmpty
@@ -259,6 +295,8 @@ class _TecnicoDashboardScreenState extends State<TecnicoDashboardScreen> {
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(content: Text(_mapError(e))),
                   );
+                } finally {
+                  if (mounted) setState(() => _accionEnCurso = false);
                 }
               },
               child: const Text('Confirmar'),
@@ -331,6 +369,40 @@ class _TecnicoDashboardScreenState extends State<TecnicoDashboardScreen> {
     }
   }
 
+  /// Abre la vista de ruta estilo delivery hacia el cliente. La ubicacion del
+  /// cliente proviene del incidente embebido en la asignacion (latitud/longitud,
+  /// que el backend envia en IncidenteParaTecnico).
+  void _abrirRutaCliente() {
+    final incidente = _incidente ?? _asignacion?.incidente;
+    if (incidente == null) return;
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => TecnicoRutaScreen(
+          idIncidente: incidente.idIncidente,
+          clienteLat: incidente.latitud,
+          clienteLng: incidente.longitud,
+        ),
+      ),
+    );
+  }
+
+  /// Boton secundario para abrir la ruta hacia el cliente. Solo tiene sentido
+  /// mientras el tecnico va en camino (estados aceptada / en_camino).
+  Widget _buildBotonVerRuta() {
+    return SizedBox(
+      width: double.infinity,
+      child: OutlinedButton.icon(
+        onPressed: _abrirRutaCliente,
+        icon: const Icon(Icons.navigation),
+        label: const Text('Ver ruta al cliente'),
+        style: OutlinedButton.styleFrom(
+          minimumSize: const Size(0, 48),
+        ),
+      ),
+    );
+  }
+
   Widget _buildActionButtons() {
     if (_asignacion == null) return const SizedBox.shrink();
 
@@ -348,31 +420,43 @@ class _TecnicoDashboardScreenState extends State<TecnicoDashboardScreen> {
         );
 
       case 'aceptada':
-        return SizedBox(
-          width: double.infinity,
-          child: ElevatedButton.icon(
-            onPressed: _handleIniciarViaje,
-            icon: const Icon(Icons.directions_car),
-            label: const Text('Iniciar Viaje'),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.orange,
-              foregroundColor: Colors.white,
+        return Column(
+          children: [
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: _accionEnCurso ? null : _handleIniciarViaje,
+                icon: const Icon(Icons.directions_car),
+                label: const Text('Iniciar Viaje'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.orange,
+                  foregroundColor: Colors.white,
+                ),
+              ),
             ),
-          ),
+            const SizedBox(height: 12),
+            _buildBotonVerRuta(),
+          ],
         );
 
       case 'en_camino':
-        return SizedBox(
-          width: double.infinity,
-          child: ElevatedButton.icon(
-            onPressed: _handleCompletar,
-            icon: const Icon(Icons.check_circle),
-            label: const Text('Completar Servicio'),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.green,
-              foregroundColor: Colors.white,
+        return Column(
+          children: [
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: _accionEnCurso ? null : _handleCompletar,
+                icon: const Icon(Icons.check_circle),
+                label: const Text('Completar Servicio'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.green,
+                  foregroundColor: Colors.white,
+                ),
+              ),
             ),
-          ),
+            const SizedBox(height: 12),
+            _buildBotonVerRuta(),
+          ],
         );
 
       case 'completada':

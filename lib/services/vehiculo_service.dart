@@ -2,7 +2,9 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/material.dart';
+import 'package:sqflite/sqflite.dart';
 import '../config/api_config.dart';
+import 'offline/local_db.dart';
 
 class VehiculoService {
   static const String baseUrl = ApiConfig.baseUrl;
@@ -136,10 +138,10 @@ class VehiculoService {
       return {'success': false, 'error': 'Error al registrar vehículo (${response.statusCode})'};
     } catch (e) {
       debugPrint('❌ Excepción: $e');
-      return {'success': false, 'error': 'Error de conexión: $e'};
+      return {'success': false, 'error': 'Sin conexion a internet.'};
     }
   }
-  
+
   // Listar mis vehículos con depuración
   Future<Map<String, dynamic>> listarMisVehiculos() async {
     try {
@@ -176,16 +178,75 @@ class VehiculoService {
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         debugPrint('✅ Vehículos cargados exitosamente: ${data.length} vehículos');
-        return {'success': true, 'vehiculos': data};
+        // Cacheamos la lista para poder reportar emergencias sin conexion.
+        final lista = List<Map<String, dynamic>>.from(
+          (data as List).map((v) => Map<String, dynamic>.from(v as Map)),
+        );
+        await _cacheVehiculos(lista);
+        return {'success': true, 'vehiculos': lista};
       } else if (response.statusCode == 401) {
         return await _manejarError401('/vehiculos/mis-autos');
       }
-      
+
       debugPrint('❌ Error: ${response.statusCode}');
       return {'success': false, 'error': 'Error al cargar vehículos (${response.statusCode})'};
     } catch (e) {
       debugPrint('❌ Excepción: $e');
-      return {'success': false, 'error': 'Error de conexión: $e'};
+      // Sin conexion (SocketException / ClientException / timeout): usamos la
+      // cache local para que el usuario pueda reportar la emergencia igual.
+      final cache = await _leerVehiculosCache();
+      if (cache.isNotEmpty) {
+        debugPrint('📦 Sin conexion: devolviendo ${cache.length} vehiculos de cache');
+        return {'success': true, 'vehiculos': cache, 'offline': true};
+      }
+      return {
+        'success': false,
+        'offline': true,
+        'error':
+            'Sin conexion. Conectate al menos una vez para guardar tus vehiculos.',
+      };
+    }
+  }
+
+  // Guarda en LocalDB la lista de vehiculos (borra e inserta). Permite usarlos
+  // despues sin conexion en el flujo de reporte de emergencia.
+  Future<void> _cacheVehiculos(List<Map<String, dynamic>> vehiculos) async {
+    try {
+      final db = await LocalDB.instance;
+      final ahora = DateTime.now().toIso8601String();
+      await db.transaction((tx) async {
+        await tx.delete('vehiculos');
+        for (final v in vehiculos) {
+          await tx.insert(
+            'vehiculos',
+            {
+              'id_vehiculo': v['id_vehiculo'],
+              'placa': v['placa'],
+              'marca': v['marca'],
+              'modelo': v['modelo'],
+              'anio': v['anio'],
+              'color': v['color'],
+              'cached_at': ahora,
+            },
+            conflictAlgorithm: ConflictAlgorithm.replace,
+          );
+        }
+      });
+      debugPrint('📦 Vehiculos cacheados localmente: ${vehiculos.length}');
+    } catch (e) {
+      debugPrint('⚠️ No se pudo cachear vehiculos: $e');
+    }
+  }
+
+  // Lee los vehiculos guardados en cache local. Devuelve lista vacia si no hay.
+  Future<List<Map<String, dynamic>>> _leerVehiculosCache() async {
+    try {
+      final db = await LocalDB.instance;
+      final rows = await db.query('vehiculos', orderBy: 'placa ASC');
+      return rows.map((r) => Map<String, dynamic>.from(r)).toList();
+    } catch (e) {
+      debugPrint('⚠️ No se pudo leer cache de vehiculos: $e');
+      return [];
     }
   }
   
@@ -214,10 +275,11 @@ class VehiculoService {
       
       return {'success': false, 'error': 'Error al cargar vehículo'};
     } catch (e) {
-      return {'success': false, 'error': 'Error de conexión: $e'};
+      debugPrint('❌ Excepción: $e');
+      return {'success': false, 'error': 'Sin conexion a internet.'};
     }
   }
-  
+
   // Editar vehículo
   Future<Map<String, dynamic>> editarVehiculo(
     int idVehiculo, {
@@ -260,10 +322,11 @@ class VehiculoService {
       
       return {'success': false, 'error': 'Error al editar vehículo'};
     } catch (e) {
-      return {'success': false, 'error': 'Error de conexión: $e'};
+      debugPrint('❌ Excepción: $e');
+      return {'success': false, 'error': 'Sin conexion a internet.'};
     }
   }
-  
+
   // Eliminar vehículo (baja lógica)
   Future<Map<String, dynamic>> eliminarVehiculo(int idVehiculo) async {
     try {
@@ -289,7 +352,8 @@ class VehiculoService {
       
       return {'success': false, 'error': 'Error al eliminar vehículo'};
     } catch (e) {
-      return {'success': false, 'error': 'Error de conexión: $e'};
+      debugPrint('❌ Excepción: $e');
+      return {'success': false, 'error': 'Sin conexion a internet.'};
     }
   }
 }
