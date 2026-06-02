@@ -214,6 +214,36 @@ class _TecnicoDashboardScreenState extends State<TecnicoDashboardScreen> {
     }
   }
 
+  Future<void> _handleLlegue() async {
+    if (_accionEnCurso || _asignacion == null) return;
+    _log('_handleLlegue -> INICIO idAsignacion=${_asignacion!.idAsignacion}');
+    setState(() => _accionEnCurso = true);
+    try {
+      final updated = await _tecnicoService.marcarLlegada(_asignacion!.idAsignacion);
+      _log('_handleLlegue -> OK nuevoEstado=${updated.estadoAsignacion}');
+      setState(() => _asignacion = updated);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Llegada marcada. Ya puedes finalizar el servicio.')),
+      );
+    } catch (e, st) {
+      _log('_handleLlegue -> ERROR: $e');
+      _log('_handleLlegue -> STACK: $st');
+      if (!mounted) return;
+      // Si el geofence ya la marco 'llegado', recargamos en silencio.
+      final raw = e.toString().toLowerCase();
+      if (raw.contains('llegado') || raw.contains('marcar llegada')) {
+        await _loadAsignacion();
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(_mapError(e))),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _accionEnCurso = false);
+    }
+  }
+
   Future<void> _handleCompletar() async {
     // Mismo guard que en iniciar viaje: evita abrir el dialogo o reenviar
     // mientras ya hay una accion en curso.
@@ -369,6 +399,8 @@ class _TecnicoDashboardScreenState extends State<TecnicoDashboardScreen> {
         return Colors.green;
       case 'en_camino':
         return Colors.blue;
+      case 'llegado':
+        return Colors.indigo;
       case 'completada':
         return Colors.teal;
       default:
@@ -384,6 +416,8 @@ class _TecnicoDashboardScreenState extends State<TecnicoDashboardScreen> {
         return Icons.check_circle;
       case 'en_camino':
         return Icons.directions_car;
+      case 'llegado':
+        return Icons.flag;
       case 'completada':
         return Icons.done_all;
       default:
@@ -467,11 +501,11 @@ class _TecnicoDashboardScreenState extends State<TecnicoDashboardScreen> {
             SizedBox(
               width: double.infinity,
               child: ElevatedButton.icon(
-                onPressed: _accionEnCurso ? null : _handleCompletar,
-                icon: const Icon(Icons.check_circle),
-                label: const Text('Completar Servicio'),
+                onPressed: _accionEnCurso ? null : _handleLlegue,
+                icon: const Icon(Icons.location_on),
+                label: const Text('Ya llegué'),
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.green,
+                  backgroundColor: Colors.blue,
                   foregroundColor: Colors.white,
                 ),
               ),
@@ -479,6 +513,20 @@ class _TecnicoDashboardScreenState extends State<TecnicoDashboardScreen> {
             const SizedBox(height: 12),
             _buildBotonVerRuta(),
           ],
+        );
+
+      case 'llegado':
+        return SizedBox(
+          width: double.infinity,
+          child: ElevatedButton.icon(
+            onPressed: _accionEnCurso ? null : _handleCompletar,
+            icon: const Icon(Icons.check_circle),
+            label: const Text('Terminar / Finalizar'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.green,
+              foregroundColor: Colors.white,
+            ),
+          ),
         );
 
       case 'completada':

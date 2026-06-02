@@ -248,6 +248,36 @@ class TecnicoAsignacionesService {
     }
   }
 
+  /// Marca que el técnico llegó al lugar (en_camino → llegado). Tras esto el
+  /// técnico podrá finalizar el servicio (e ingresar el precio).
+  Future<AsignacionResponse> marcarLlegada(int idAsignacion) async {
+    try {
+      debugPrint('[TecnicoAsignacionesService] marcarLlegada -> $idAsignacion');
+      final token = await _resolverTokenTecnico();
+
+      final response = await http
+          .put(
+            Uri.parse('$_baseUrl/tecnicos/mis-asignaciones/$idAsignacion/llegue'),
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer $token',
+            },
+          )
+          .timeout(const Duration(seconds: 30));
+
+      debugPrint('[TecnicoAsignacionesService] marcarLlegada response: ${response.statusCode}');
+      if (response.statusCode == 200) {
+        return AsignacionResponse.fromJson(
+          jsonDecode(response.body) as Map<String, dynamic>,
+        );
+      }
+      throw Exception('Error ${response.statusCode}: ${response.body}');
+    } catch (e) {
+      debugPrint('[TecnicoAsignacionesService] marcarLlegada <- ERROR: $e');
+      rethrow;
+    }
+  }
+
   Future<AsignacionResponse> completarServicio(
     int idAsignacion, {
     double? costoFinal,
