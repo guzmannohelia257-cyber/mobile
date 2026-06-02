@@ -221,7 +221,13 @@ class _TecnicoDashboardScreenState extends State<TecnicoDashboardScreen> {
     _log('_handleCompletar -> abrir dialogo idAsignacion=${_asignacion!.idAsignacion} estado=${_asignacion!.estadoAsignacion}');
 
     final resumenController = TextEditingController();
-    final costoController = TextEditingController();
+    // Pre-cargamos el cobro con la cotizacion que vio el cliente (si existe),
+    // para que el tecnico la confirme o ajuste en lugar de partir de cero.
+    final costoController = TextEditingController(
+      text: _asignacion!.costoEstimado != null
+          ? _asignacion!.costoEstimado!.toStringAsFixed(0)
+          : '',
+    );
 
     await showDialog<void>(
       context: context,
@@ -231,6 +237,22 @@ class _TecnicoDashboardScreenState extends State<TecnicoDashboardScreen> {
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
+              if (_asignacion!.costoEstimado != null) ...[
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: Colors.blue.shade50,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.blue.shade200),
+                  ),
+                  child: Text(
+                    'Cotización que vio el cliente: Bs ${_asignacion!.costoEstimado!.toStringAsFixed(2)}',
+                    style: const TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                ),
+                const SizedBox(height: 12),
+              ],
               const Text('Cobro final (opcional)'),
               const SizedBox(height: 8),
               TextField(

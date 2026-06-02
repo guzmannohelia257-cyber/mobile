@@ -8,6 +8,7 @@ class AsignacionResponse {
   final String estadoAsignacion;
   final int? etaMinutos;
   final int? tiempoEstimadoReparacionMin;
+  final double? costoEstimado; // Tarifa/cotizacion que vio el cliente
   final String? notaTaller;
   final DateTime createdAt;
   final IncidenteResponse incidente;
@@ -20,6 +21,7 @@ class AsignacionResponse {
     required this.estadoAsignacion,
     this.etaMinutos,
     this.tiempoEstimadoReparacionMin,
+    this.costoEstimado,
     this.notaTaller,
     required this.createdAt,
     required this.incidente,
@@ -48,6 +50,7 @@ class AsignacionResponse {
       etaMinutos: json['eta_minutos'] as int?,
       tiempoEstimadoReparacionMin:
           json['tiempo_estimado_reparacion_min'] as int?,
+      costoEstimado: (json['costo_estimado'] as num?)?.toDouble(),
       notaTaller: json['nota_taller'] as String?,
       createdAt: DateTime.tryParse((json['created_at'] ?? '').toString()) ??
           DateTime.fromMillisecondsSinceEpoch(0),
