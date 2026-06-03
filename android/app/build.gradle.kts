@@ -37,6 +37,13 @@ android {
             // TODO: Add your own signing config for the release build.
             // Signing with the debug keys for now, so `flutter run --release` works.
             signingConfig = signingConfigs.getByName("debug")
+
+            // flutter_stripe referencia clases de "push provisioning" que no se
+            // incluyen en el APK; con R8 activo el build de release falla por
+            // clases faltantes. La app no usa esa funcion, por lo que se desactiva
+            // la minificacion para que el release sea estable.
+            isMinifyEnabled = false
+            isShrinkResources = false
         }
     }
 }

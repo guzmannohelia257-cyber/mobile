@@ -20,16 +20,20 @@ import '../services/tecnico_asignaciones_service.dart';
 /// se dirige al cliente, por eso la posicion del tecnico se toma del dispositivo
 /// y no del servidor.
 ///
-/// El constructor se mantiene exactamente igual (idIncidente, clienteLat,
-/// clienteLng) para no romper a los llamadores existentes.
+/// El constructor recibe idIncidente, idAsignacion y la posicion del cliente
+/// (clienteLat, clienteLng). El idAsignacion es necesario para reportar la
+/// ubicacion del tecnico al backend y obtener el ETA en vivo que tambien ven
+/// las demas vistas.
 class TecnicoRutaScreen extends StatefulWidget {
   final int idIncidente;
+  final int idAsignacion;
   final double clienteLat;
   final double clienteLng;
 
   const TecnicoRutaScreen({
     super.key,
     required this.idIncidente,
+    required this.idAsignacion,
     required this.clienteLat,
     required this.clienteLng,
   });
@@ -183,15 +187,34 @@ class _TecnicoRutaScreenState extends State<TecnicoRutaScreen> {
           );
 
     if (esPrimerFix || desplazamiento >= _umbralRecalculoMetros) {
+      // La ruta OSRM se usa SOLO para dibujar la geometria en el mapa.
       _calcularRuta(tecnico);
-      // Reporta esta MISMA posicion al backend para que el ETA que ve el cliente
-      // se calcule desde aqui y coincida con el que ve el tecnico.
-      _asignacionesService.reportarUbicacion(tecnico.latitude, tecnico.longitude);
+      // El ETA/distancia vienen del backend: reportamos esta MISMA posicion y
+      // usamos el ETA en vivo que devuelve, asi todas las vistas (tecnico y
+      // cliente) muestran exactamente el mismo valor.
+      _reportarYActualizarEta(tecnico);
     }
   }
 
-  /// Solicita la ruta optima por calles a OSRM. Si falla, dibuja una linea recta
-  /// como respaldo y estima distancia/ETA con haversine.
+  /// Reporta la posicion al backend y actualiza la barra de info con el ETA en
+  /// vivo que este devuelve (no con el calculo OSRM local).
+  Future<void> _reportarYActualizarEta(LatLng tecnico) async {
+    final eta = await _asignacionesService.reportarUbicacion(
+      tecnico.latitude,
+      tecnico.longitude,
+      widget.idAsignacion,
+    );
+    if (eta == null || !mounted) return;
+    setState(() {
+      _etaMinutos = (eta['eta_minutos'] as num?)?.toInt();
+      _distanciaKm = (eta['distancia_km'] as num?)?.toDouble();
+    });
+  }
+
+  /// Solicita la ruta optima por calles a OSRM SOLO para la geometria del mapa
+  /// (la polyline). El ETA y la distancia NO se calculan aqui: vienen del
+  /// backend via reportarUbicacion. Si OSRM falla, dibuja una linea recta como
+  /// respaldo.
   Future<void> _calcularRuta(LatLng tecnico) async {
     if (_calculandoRuta) return;
     _calculandoRuta = true;
@@ -229,17 +252,10 @@ class _TecnicoRutaScreenState extends State<TecnicoRutaScreen> {
               ))
           .toList();
 
-      final duracionSeg = (ruta['duration'] as num?)?.toDouble() ?? 0.0;
-      final distanciaMetros = (ruta['distance'] as num?)?.toDouble() ?? 0.0;
-
-      final etaMin = (duracionSeg / 60).round();
-
       if (!mounted) return;
       setState(() {
         _rutaPuntos = puntos;
         _rutaEsFallback = false;
-        _distanciaKm = distanciaMetros / 1000.0;
-        _etaMinutos = etaMin < 1 ? 1 : etaMin;
       });
     } catch (_) {
       // Respaldo: linea recta y estimacion con haversine.
@@ -249,21 +265,13 @@ class _TecnicoRutaScreenState extends State<TecnicoRutaScreen> {
     }
   }
 
-  /// Respaldo cuando OSRM no responde: linea recta punteada y estimacion simple.
+  /// Respaldo cuando OSRM no responde: linea recta punteada. El ETA/distancia
+  /// siguen viniendo del backend, aqui solo se dibuja la geometria.
   void _aplicarRutaFallback(LatLng tecnico, LatLng cliente) {
-    final distanciaKm = _calcularDistanciaKm(
-      tecnico.latitude,
-      tecnico.longitude,
-      cliente.latitude,
-      cliente.longitude,
-    );
-
     if (!mounted) return;
     setState(() {
       _rutaPuntos = [tecnico, cliente];
       _rutaEsFallback = true;
-      _distanciaKm = distanciaKm;
-      _etaMinutos = _estimarMinutosDesdeKm(distanciaKm);
     });
   }
 
@@ -507,7 +515,8 @@ class _TecnicoRutaScreenState extends State<TecnicoRutaScreen> {
     );
   }
 
-  // --- Helpers de distancia/ETA (haversine) usados por el respaldo. ---
+  // --- Helpers de distancia (haversine) usados para detectar el movimiento
+  // del tecnico y decidir cuando recalcular la ruta. ---
 
   /// Distancia en kilometros entre dos coordenadas (haversine).
   double _calcularDistanciaKm(
@@ -535,13 +544,6 @@ class _TecnicoRutaScreenState extends State<TecnicoRutaScreen> {
     double lon2,
   ) {
     return _calcularDistanciaKm(lat1, lon1, lat2, lon2) * 1000.0;
-  }
-
-  int _estimarMinutosDesdeKm(double distanciaKm) {
-    const double velocidadPromedioKmh = 30.0;
-    final horas = distanciaKm / velocidadPromedioKmh;
-    final minutos = (horas * 60).round();
-    return minutos < 1 ? 1 : minutos;
   }
 
   double _gradosARadianes(double grados) =>
