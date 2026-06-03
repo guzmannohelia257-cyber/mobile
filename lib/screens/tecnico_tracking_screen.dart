@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
@@ -37,6 +36,8 @@ class _TecnicoTrackingScreenState extends State<TecnicoTrackingScreen> {
   String _nombreTecnico = 'Técnico';
   String _estadoAsignacion = 'desconocido';
   int? _idAsignacion;
+  double? _distanciaKm;
+  int? _etaMinutos;
 
   @override
   void initState() {
@@ -73,6 +74,8 @@ class _TecnicoTrackingScreenState extends State<TecnicoTrackingScreen> {
         _nombreTecnico = (data['nombre_tecnico'] ?? 'Técnico').toString();
         _estadoAsignacion = (data['estado_asignacion'] ?? 'desconocido').toString();
         _idAsignacion = (data['id_asignacion'] as num?)?.toInt();
+        _distanciaKm = (data['distancia_km'] as num?)?.toDouble();
+        _etaMinutos = (data['eta_minutos'] as num?)?.toInt();
         _error = null;
         _cargando = false;
       });
@@ -97,17 +100,10 @@ class _TecnicoTrackingScreenState extends State<TecnicoTrackingScreen> {
         ? LatLng(_tecnicoLat!, _tecnicoLng!)
         : null;
 
-    final distanciaKm = tecnico != null
-        ? _calcularDistanciaKm(
-            cliente.latitude,
-            cliente.longitude,
-            tecnico.latitude,
-            tecnico.longitude,
-          )
-        : null;
-    final etaMinutos = distanciaKm != null
-        ? _estimarMinutosDesdeKm(distanciaKm)
-        : null;
+    // La distancia/ETA vienen del backend (OSRM), para que sean iguales en todas
+    // las vistas (cliente y tecnico). No se recalculan aqui.
+    final distanciaKm = _distanciaKm;
+    final etaMinutos = _etaMinutos;
 
     // El cliente puede cancelar mientras el servicio no haya terminado; la
     // compensacion al taller se cobra segun el estado (en_camino/llegado = 100%).
@@ -270,30 +266,4 @@ class _TecnicoTrackingScreenState extends State<TecnicoTrackingScreen> {
     );
   }
 
-  double _calcularDistanciaKm(
-    double lat1,
-    double lon1,
-    double lat2,
-    double lon2,
-  ) {
-    const double radioTierraKm = 6371.0;
-    final dLat = _gradosARadianes(lat2 - lat1);
-    final dLon = _gradosARadianes(lon2 - lon1);
-    final a =
-      (math.sin(dLat / 2) * math.sin(dLat / 2)) +
-      math.cos(_gradosARadianes(lat1)) *
-        math.cos(_gradosARadianes(lat2)) *
-        (math.sin(dLon / 2) * math.sin(dLon / 2));
-    final c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a));
-    return radioTierraKm * c;
-  }
-
-  int _estimarMinutosDesdeKm(double distanciaKm) {
-    const double velocidadPromedioKmh = 25.0;
-    final horas = distanciaKm / velocidadPromedioKmh;
-    final minutos = (horas * 60).round();
-    return minutos < 1 ? 1 : minutos;
-  }
-
-  double _gradosARadianes(double grados) => grados * (3.141592653589793 / 180.0);
 }
