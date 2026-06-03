@@ -38,6 +38,10 @@ class _ClienteTrackingScreenState extends State<ClienteTrackingScreen> {
   int? _etaMinutos;
   double? _distanciaKm;
   bool _llego = false;
+  // Hora limite de llegada de la cotizacion (T1 = en camino + ETA). El backend
+  // la envia en el evento tecnico.posicion. Si ya paso, el aviso sale en rojo.
+  DateTime? _horaLimiteLlegada;
+  Timer? _relojRetraso;
 
   final _adendaSvc = AdendaService();
   List<Adenda> _adendasPendientes = [];
@@ -54,6 +58,10 @@ class _ClienteTrackingScreenState extends State<ClienteTrackingScreen> {
       const Duration(seconds: 20),
       (_) => _refrescarAdendas(),
     );
+    // Reloj que re-evalua el aviso de retraso (pasa a rojo al cruzar T1).
+    _relojRetraso = Timer.periodic(const Duration(seconds: 30), (_) {
+      if (mounted && !_llego && _horaLimiteLlegada != null) setState(() {});
+    });
   }
 
   Future<void> _refrescarAdendas() async {
@@ -80,6 +88,10 @@ class _ClienteTrackingScreenState extends State<ClienteTrackingScreen> {
           if (eta != null) {
             _etaMinutos = eta['eta_minutos'] as int?;
             _distanciaKm = (eta['distancia_km'] as num?)?.toDouble();
+            final limiteStr = eta['hora_limite_llegada'] as String?;
+            _horaLimiteLlegada = limiteStr != null
+                ? DateTime.tryParse(limiteStr)?.toLocal()
+                : null;
           }
         });
         _centrarMapa();
@@ -125,6 +137,7 @@ class _ClienteTrackingScreenState extends State<ClienteTrackingScreen> {
     _rt.unsubscribe('incidente:${widget.idIncidente}');
     _sub?.cancel();
     _adendaPollTimer?.cancel();
+    _relojRetraso?.cancel();
     super.dispose();
   }
 
@@ -152,6 +165,7 @@ class _ClienteTrackingScreenState extends State<ClienteTrackingScreen> {
         children: [
           _buildMapa(),
           if (_distanciaKm != null) _buildInfoBar(),
+          if (!_llego && _horaLimiteLlegada != null) _buildRetrasoBanner(),
           if (_llego) _buildLlegoBanner(),
           if (_adendasPendientes.isNotEmpty)
             Positioned(
@@ -273,6 +287,51 @@ class _ClienteTrackingScreenState extends State<ClienteTrackingScreen> {
                 ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+
+  /// Aviso de retraso para el cliente, basado en T1 (hora de la cotizacion):
+  ///  - antes de T1: neutro, "debe llegar a las HH:MM" (tiempo de espera).
+  ///  - pasado T1: rojo, "va con retraso (debia llegar a las HH:MM)".
+  Widget _buildRetrasoBanner() {
+    final t1 = _horaLimiteLlegada!;
+    String hhmm(DateTime d) =>
+        '${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
+    final retrasado = DateTime.now().isAfter(t1);
+    final fondo = retrasado ? AppColors.dangerSoft : AppColors.slateSoft;
+    final borde = retrasado ? AppColors.danger : AppColors.slate;
+    final colorTexto = retrasado ? AppColors.dangerInk : AppColors.ink;
+    final icono = retrasado ? Icons.warning_amber_rounded : Icons.timer_outlined;
+    final texto = retrasado
+        ? 'Va con retraso (debia llegar a las ${hhmm(t1)})'
+        : 'Tiempo de espera: debe llegar a las ${hhmm(t1)}';
+    return Positioned(
+      top: 92,
+      left: 16,
+      right: 16,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: fondo,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: borde, width: 1.2),
+        ),
+        child: Row(
+          children: [
+            Icon(icono, size: 20, color: borde),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                texto,
+                style: TextStyle(
+                  color: colorTexto,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );

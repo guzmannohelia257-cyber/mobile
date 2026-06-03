@@ -8,6 +8,9 @@ class AsignacionResponse {
   final String estadoAsignacion;
   final int? etaMinutos;
   final int? tiempoEstimadoReparacionMin;
+  // Minutos de tolerancia del SLA de llegada (config global de la plataforma).
+  // Se usa para calcular la hora maxima de llegada = horaLlegadaEstimada + tolerancia.
+  final int? slaToleranciaMin;
   final double? costoEstimado; // Tarifa/cotizacion que vio el cliente
   final String? notaTaller;
   final DateTime createdAt;
@@ -22,6 +25,7 @@ class AsignacionResponse {
     required this.estadoAsignacion,
     this.etaMinutos,
     this.tiempoEstimadoReparacionMin,
+    this.slaToleranciaMin,
     this.costoEstimado,
     this.notaTaller,
     required this.createdAt,
@@ -36,6 +40,16 @@ class AsignacionResponse {
     final base = updatedAt ?? createdAt;
     if (eta == null) return null;
     return base.toLocal().add(Duration(minutes: eta));
+  }
+
+  /// Hora maxima de llegada con tolerancia (local) = horaLlegadaEstimada +
+  /// sla_tolerancia_min. Es el limite tras el cual el backend penaliza el SLA;
+  /// pasada esta hora el retraso se considera excedido.
+  DateTime? get horaToleranciaMaxima {
+    final base = horaLlegadaEstimada;
+    final tol = slaToleranciaMin;
+    if (base == null || tol == null) return null;
+    return base.add(Duration(minutes: tol));
   }
 
   /// Formato amigable: "3 h 30 min" o "45 min".
@@ -61,6 +75,7 @@ class AsignacionResponse {
       etaMinutos: json['eta_minutos'] as int?,
       tiempoEstimadoReparacionMin:
           json['tiempo_estimado_reparacion_min'] as int?,
+      slaToleranciaMin: json['sla_tolerancia_min'] as int?,
       costoEstimado: (json['costo_estimado'] as num?)?.toDouble(),
       notaTaller: json['nota_taller'] as String?,
       createdAt: DateTime.tryParse((json['created_at'] ?? '').toString()) ??

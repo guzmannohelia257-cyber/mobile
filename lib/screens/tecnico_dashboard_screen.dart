@@ -8,6 +8,7 @@ import '../services/auth_service.dart';
 import '../services/realtime_service.dart';
 import '../services/tecnico_asignaciones_service.dart';
 import '../services/tecnico_auth_service.dart';
+import '../theme/app_colors.dart';
 import '../widgets/taller_activo_chip.dart';
 import 'tecnico_ruta_screen.dart';
 
@@ -35,6 +36,9 @@ class _TecnicoDashboardScreenState extends State<TecnicoDashboardScreen> {
   // Evita dobles envios (doble toque o recarga por realtime) que dispararian
   // una segunda transicion de estado ya invalida en el backend (400).
   bool _accionEnCurso = false;
+  // Reloj que re-evalua el color de la tarjeta de hora de llegada (normal /
+  // tolerancia / excedido) conforme pasa el tiempo, sin esperar a recargar.
+  Timer? _relojLlegada;
 
   void _log(String message) {
     debugPrint('[TEC DASH] $message');
@@ -49,6 +53,15 @@ class _TecnicoDashboardScreenState extends State<TecnicoDashboardScreen> {
     // login. Cuando el taller lo asigna, el backend publica 'asignacion.asignada'
     // y recargamos la asignación sin que el técnico tenga que refrescar.
     _rtSub = _realtime.events.listen(_onRealtimeEvent);
+    // Cada 30 s revisa si cruzó la hora de llegada o la de tolerancia para
+    // recolorear la tarjeta (verde → amarillo → rojo) mientras va en camino.
+    _relojLlegada = Timer.periodic(const Duration(seconds: 30), (_) {
+      if (!mounted) return;
+      final estado = _asignacion?.estadoAsignacion.toLowerCase();
+      if (estado == 'en_camino' || estado == 'llegado') {
+        setState(() {});
+      }
+    });
   }
 
   void _onRealtimeEvent(WsEvent evt) {
@@ -62,8 +75,129 @@ class _TecnicoDashboardScreenState extends State<TecnicoDashboardScreen> {
   @override
   void dispose() {
     _rtSub?.cancel();
+    _relojLlegada?.cancel();
     _tecnicoService.detenerSeguimientoUbicacion();
     super.dispose();
+  }
+
+  /// Tarjeta de hora de llegada con color segun el tiempo transcurrido:
+  ///  - normal (sage): aun dentro de la hora de llegada estimada.
+  ///  - amarillo (amber): paso la hora estimada pero sigue dentro de la
+  ///    tolerancia; muestra la hora maxima de llegada (eta + tolerancia).
+  ///  - rojo (danger): paso la hora maxima de tolerancia; pide llegar cuanto antes.
+  Widget _buildTarjetaLlegada(AsignacionResponse a) {
+    final estado = a.estadoAsignacion.toLowerCase();
+    final enRuta = estado == 'en_camino' || estado == 'llegado';
+    final t1 = a.horaLlegadaEstimada;
+
+    // Antes de salir (aceptada) o sin datos de hora: solo el ETA en minutos.
+    if (!enRuta || t1 == null) {
+      return _tarjetaLlegada(
+        fondo: AppColors.slateSoft,
+        borde: AppColors.slate,
+        icono: Icons.schedule,
+        colorIcono: AppColors.slate,
+        colorTexto: AppColors.ink,
+        titulo: 'Tiempo estimado de llegada: ${a.etaMinutos} min',
+      );
+    }
+
+    String hhmm(DateTime d) =>
+        '${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
+
+    final ahora = DateTime.now();
+    final t2 = a.horaToleranciaMaxima; // null si el backend no envio tolerancia
+
+    // Rojo — excedio la hora maxima de tolerancia.
+    if (t2 != null && ahora.isAfter(t2)) {
+      return _tarjetaLlegada(
+        fondo: AppColors.dangerSoft,
+        borde: AppColors.danger,
+        icono: Icons.warning_amber_rounded,
+        colorIcono: AppColors.danger,
+        colorTexto: AppColors.dangerInk,
+        titulo: 'Excediste el tiempo de llegada',
+        subtitulo: 'Llega lo más pronto posible (hora máxima: ${hhmm(t2)}).',
+      );
+    }
+
+    // Amarillo — paso la hora estimada pero sigue dentro de la tolerancia.
+    if (ahora.isAfter(t1)) {
+      return _tarjetaLlegada(
+        fondo: AppColors.amberSoft,
+        borde: AppColors.amber,
+        icono: Icons.timelapse,
+        colorIcono: AppColors.amber,
+        colorTexto: AppColors.brandInk,
+        titulo: 'Vas con retraso (esperada: ${hhmm(t1)})',
+        subtitulo: t2 != null
+            ? 'Hora máxima de llegada con tolerancia: ${hhmm(t2)}'
+            : null,
+      );
+    }
+
+    // Normal — aun dentro de la hora de llegada estimada.
+    return _tarjetaLlegada(
+      fondo: AppColors.forestSoft,
+      borde: AppColors.forest,
+      icono: Icons.schedule,
+      colorIcono: AppColors.forest,
+      colorTexto: AppColors.ink,
+      titulo: 'Llegada esperada: ${hhmm(t1)}',
+    );
+  }
+
+  Widget _tarjetaLlegada({
+    required Color fondo,
+    required Color borde,
+    required IconData icono,
+    required Color colorIcono,
+    required Color colorTexto,
+    required String titulo,
+    String? subtitulo,
+  }) {
+    return Card(
+      margin: EdgeInsets.zero,
+      color: fondo,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(color: borde, width: 1.2),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(icono, size: 20, color: colorIcono),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    titulo,
+                    style: TextStyle(
+                      fontWeight: FontWeight.w600,
+                      color: colorTexto,
+                    ),
+                  ),
+                  if (subtitulo != null) ...[
+                    const SizedBox(height: 2),
+                    Text(
+                      subtitulo,
+                      style: TextStyle(
+                        fontSize: 12.5,
+                        color: colorTexto.withValues(alpha: 0.85),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   Future<void> _loadAsignacion() async {
@@ -450,6 +584,7 @@ class _TecnicoDashboardScreenState extends State<TecnicoDashboardScreen> {
           idIncidente: incidente.idIncidente,
           clienteLat: incidente.latitud,
           clienteLng: incidente.longitud,
+          idAsignacion: _asignacion?.idAsignacion,
         ),
       ),
     );
@@ -786,30 +921,7 @@ class _TecnicoDashboardScreenState extends State<TecnicoDashboardScreen> {
               ),
               const SizedBox(height: 16),
               if (_asignacion!.etaMinutos != null)
-                Card(
-                  child: Padding(
-                    padding: const EdgeInsets.all(12),
-                    child: Builder(builder: (_) {
-                      final a = _asignacion!;
-                      final estado = a.estadoAsignacion.toLowerCase();
-                      final enRuta =
-                          estado == 'en_camino' || estado == 'llegado';
-                      final h = a.horaLlegadaEstimada;
-                      final texto = (enRuta && h != null)
-                          ? 'Llegada esperada: '
-                              '${h.hour.toString().padLeft(2, '0')}:'
-                              '${h.minute.toString().padLeft(2, '0')}'
-                          : 'Tiempo estimado de llegada: ${a.etaMinutos} min';
-                      return Row(
-                        children: [
-                          const Icon(Icons.schedule, size: 18),
-                          const SizedBox(width: 8),
-                          Expanded(child: Text(texto)),
-                        ],
-                      );
-                    }),
-                  ),
-                ),
+                _buildTarjetaLlegada(_asignacion!),
               const SizedBox(height: 16),
               Text('Detalle del Incidente', style: Theme.of(context).textTheme.titleMedium),
               const SizedBox(height: 8),

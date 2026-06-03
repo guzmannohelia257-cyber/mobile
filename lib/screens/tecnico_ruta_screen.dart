@@ -26,12 +26,16 @@ class TecnicoRutaScreen extends StatefulWidget {
   final int idIncidente;
   final double clienteLat;
   final double clienteLng;
+  // Si se provee, "ver ruta" reporta la posicion en vivo al backend que avisa
+  // al cliente, y muestra la misma distancia/tiempo que ve el cliente.
+  final int? idAsignacion;
 
   const TecnicoRutaScreen({
     super.key,
     required this.idIncidente,
     required this.clienteLat,
     required this.clienteLng,
+    this.idAsignacion,
   });
 
   @override
@@ -186,8 +190,35 @@ class _TecnicoRutaScreenState extends State<TecnicoRutaScreen> {
       _calcularRuta(tecnico);
       // Reporta esta MISMA posicion al backend para que el ETA que ve el cliente
       // se calcule desde aqui y coincida con el que ve el tecnico.
-      _asignacionesService.reportarUbicacion(tecnico.latitude, tecnico.longitude);
+      _reportarYSincronizar(tecnico);
     }
+  }
+
+  /// Reporta la posicion en vivo al backend. Si hay id de asignacion, usa el
+  /// endpoint que avisa al cliente y devuelve el ETA del backend, con el que
+  /// sobrescribimos la distancia/tiempo mostrados para que coincidan EXACTAMENTE
+  /// con lo que ve el cliente. Sin id, solo guarda la posicion (modo local).
+  Future<void> _reportarYSincronizar(LatLng tecnico) async {
+    final idAsig = widget.idAsignacion;
+    if (idAsig == null) {
+      _asignacionesService.reportarUbicacion(
+        tecnico.latitude,
+        tecnico.longitude,
+      );
+      return;
+    }
+    final eta = await _asignacionesService.reportarPosicionConEta(
+      idAsig,
+      tecnico.latitude,
+      tecnico.longitude,
+    );
+    if (!mounted || eta == null) return;
+    final d = (eta['distancia_km'] as num?)?.toDouble();
+    final m = eta['eta_minutos'] as int?;
+    setState(() {
+      if (d != null) _distanciaKm = d;
+      if (m != null) _etaMinutos = m < 1 ? 1 : m;
+    });
   }
 
   /// Solicita la ruta optima por calles a OSRM. Si falla, dibuja una linea recta

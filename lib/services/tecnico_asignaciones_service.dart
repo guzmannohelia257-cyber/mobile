@@ -390,6 +390,46 @@ class TecnicoAsignacionesService {
     }
   }
 
+  /// Reporta la posicion en vivo al endpoint que SI recalcula el ETA y avisa al
+  /// cliente (POST /tecnicos/me/ubicacion con id_asignacion). Devuelve el mapa
+  /// 'eta' del backend (distancia_km, eta_minutos, hora_limite_llegada) para que
+  /// el tecnico muestre EXACTAMENTE la misma distancia/tiempo que ve el cliente.
+  /// Devuelve null si falla.
+  Future<Map<String, dynamic>?> reportarPosicionConEta(
+    int idAsignacion,
+    double latitud,
+    double longitud,
+  ) async {
+    try {
+      final token = await _resolverTokenTecnico();
+      final response = await http
+          .post(
+            Uri.parse('$_baseUrl/tecnicos/me/ubicacion'),
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer $token',
+            },
+            body: jsonEncode({
+              'latitud': latitud,
+              'longitud': longitud,
+              'id_asignacion': idAsignacion,
+            }),
+          )
+          .timeout(const Duration(seconds: 12));
+      if (response.statusCode == 200) {
+        final json = jsonDecode(response.body) as Map<String, dynamic>;
+        return json['eta'] as Map<String, dynamic>?;
+      }
+      debugPrint(
+        '[TecnicoAsignacionesService] reportarPosicionConEta '
+        'status=${response.statusCode}',
+      );
+    } catch (e) {
+      debugPrint('[TecnicoAsignacionesService] reportarPosicionConEta ERROR: $e');
+    }
+    return null;
+  }
+
   /// Inicia el envío periódico de ubicación (cada 8 segundos).
   void iniciarSeguimientoUbicacion() {
     _locationTimer?.cancel();

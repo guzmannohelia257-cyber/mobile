@@ -116,7 +116,12 @@ class _CancelarButtonState extends State<CancelarButton> {
             ]),
             const SizedBox(height: 16),
             if (r.compensacionMonto == 0)
-              const Text('Sin compensacion al taller (no habia salido).')
+              Text(
+                r.penalizacionExoneradaPorRetraso
+                    ? 'Sin compensacion: el tecnico se retraso respecto a la '
+                        'hora de la cotizacion.'
+                    : 'Sin compensacion al taller (no habia salido).',
+              )
             else
               Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
