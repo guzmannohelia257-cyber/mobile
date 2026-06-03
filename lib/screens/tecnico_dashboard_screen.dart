@@ -283,7 +283,7 @@ class _TecnicoDashboardScreenState extends State<TecnicoDashboardScreen> {
                 ),
                 const SizedBox(height: 12),
               ],
-              const Text('Cobro final (opcional)'),
+              const Text('Cobro final (obligatorio)'),
               const SizedBox(height: 8),
               TextField(
                 controller: costoController,
@@ -315,10 +315,20 @@ class _TecnicoDashboardScreenState extends State<TecnicoDashboardScreen> {
               onPressed: () async {
                 // Guard contra dobles envios al confirmar el dialogo.
                 if (_accionEnCurso) return;
+                // El monto final es obligatorio: el backend lo exige (>0) y sin
+                // el se generaba un cobro de $0 que el cliente no podia pagar.
+                final costo = double.tryParse(costoController.text.trim());
+                if (costo == null || costo <= 0) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Ingresa el monto final del servicio (mayor a 0).'),
+                    ),
+                  );
+                  return;
+                }
                 Navigator.pop(context);
                 setState(() => _accionEnCurso = true);
                 try {
-                  final costo = double.tryParse(costoController.text.trim());
                   final resumen = resumenController.text.trim().isEmpty
                       ? null
                       : resumenController.text.trim();
