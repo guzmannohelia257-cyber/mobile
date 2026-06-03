@@ -6,6 +6,7 @@ import '../models/candidato_asignacion.dart';
 import 'subir_evidencia_screen.dart';
 import 'mensajes_screen.dart';
 import 'tecnico_tracking_screen.dart';
+import '../widgets/cancelar_button.dart';
 
 class HistorialEmergenciasScreen extends StatefulWidget {
   const HistorialEmergenciasScreen({super.key});
@@ -313,6 +314,11 @@ class _HistorialEmergenciasScreenState
               : null;
           final tieneTallerConfirmado = asigActiva != null &&
               estadosAsigActivos.contains(asigActiva.estado.nombre.toLowerCase());
+          // El cliente puede cancelar mientras el servicio sigue en curso
+          // (aceptada/en_camino/llegado); si ya esta completada/cancelada, no.
+          const estadosCancelables = {'aceptada', 'en_camino', 'llegado'};
+          final asignacionCancelable = asigActiva != null &&
+              estadosCancelables.contains(asigActiva.estado.nombre.toLowerCase());
 
           return AlertDialog(
             title: Text('#${inc.idIncidente} - Detalles'),
@@ -420,6 +426,16 @@ class _HistorialEmergenciasScreenState
                     ),
                     const SizedBox(height: 8),
                     _buildAsignacionCard(asigActiva!),
+                    if (asignacionCancelable) ...[
+                      const SizedBox(height: 12),
+                      CancelarButton(
+                        idAsignacion: asigActiva.idAsignacion,
+                        onCancelado: () {
+                          Navigator.pop(ctx);
+                          _cargarIncidencias();
+                        },
+                      ),
+                    ],
                   ],
                   if (inc.idCategoria == null) ...[
                     const SizedBox(height: 16),
@@ -441,7 +457,8 @@ class _HistorialEmergenciasScreenState
               ),
             ),
             actions: [
-              if (inc.idEstado == 1 || inc.idEstado == 2)
+              if ((inc.idEstado == 1 || inc.idEstado == 2) &&
+                  !tieneTallerConfirmado)
                 TextButton(
                   onPressed: cancelar,
                   style: TextButton.styleFrom(foregroundColor: AppColors.danger),
