@@ -11,6 +11,7 @@ class AsignacionResponse {
   final double? costoEstimado; // Tarifa/cotizacion que vio el cliente
   final String? notaTaller;
   final DateTime createdAt;
+  final DateTime? updatedAt;
   final IncidenteResponse incidente;
 
   AsignacionResponse({
@@ -24,8 +25,18 @@ class AsignacionResponse {
     this.costoEstimado,
     this.notaTaller,
     required this.createdAt,
+    this.updatedAt,
     required this.incidente,
   });
+
+  /// Hora estimada de llegada (local) = momento en que se puso 'en_camino'
+  /// (updated_at) + eta_minutos. Solo tiene sentido una vez en camino/llegado.
+  DateTime? get horaLlegadaEstimada {
+    final eta = etaMinutos;
+    final base = updatedAt ?? createdAt;
+    if (eta == null) return null;
+    return base.toLocal().add(Duration(minutes: eta));
+  }
 
   /// Formato amigable: "3 h 30 min" o "45 min".
   String? get tiempoEstimadoLabel {
@@ -54,6 +65,7 @@ class AsignacionResponse {
       notaTaller: json['nota_taller'] as String?,
       createdAt: DateTime.tryParse((json['created_at'] ?? '').toString()) ??
           DateTime.fromMillisecondsSinceEpoch(0),
+      updatedAt: DateTime.tryParse((json['updated_at'] ?? '').toString()),
       incidente: IncidenteResponse.fromJson(
         (json['incidente'] ?? <String, dynamic>{}) as Map<String, dynamic>,
       ),

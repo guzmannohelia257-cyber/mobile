@@ -789,7 +789,25 @@ class _TecnicoDashboardScreenState extends State<TecnicoDashboardScreen> {
                 Card(
                   child: Padding(
                     padding: const EdgeInsets.all(12),
-                    child: Text('ETA: ${_asignacion!.etaMinutos} minutos'),
+                    child: Builder(builder: (_) {
+                      final a = _asignacion!;
+                      final estado = a.estadoAsignacion.toLowerCase();
+                      final enRuta =
+                          estado == 'en_camino' || estado == 'llegado';
+                      final h = a.horaLlegadaEstimada;
+                      final texto = (enRuta && h != null)
+                          ? 'Llegada esperada: '
+                              '${h.hour.toString().padLeft(2, '0')}:'
+                              '${h.minute.toString().padLeft(2, '0')}'
+                          : 'Tiempo estimado de llegada: ${a.etaMinutos} min';
+                      return Row(
+                        children: [
+                          const Icon(Icons.schedule, size: 18),
+                          const SizedBox(width: 8),
+                          Expanded(child: Text(texto)),
+                        ],
+                      );
+                    }),
                   ),
                 ),
               const SizedBox(height: 16),
