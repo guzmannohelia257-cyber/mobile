@@ -369,6 +369,27 @@ class TecnicoAsignacionesService {
     }
   }
 
+  /// Reporta una ubicacion concreta (la que ya tiene la pantalla de ruta) al
+  /// backend, para que el ETA que ve el CLIENTE se calcule desde la MISMA
+  /// posicion en vivo del tecnico y coincida con la que ve el tecnico.
+  Future<void> reportarUbicacion(double latitud, double longitud) async {
+    try {
+      final token = await _resolverTokenTecnico();
+      await http
+          .put(
+            Uri.parse('$_baseUrl/tecnicos/mi-ubicacion'),
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer $token',
+            },
+            body: jsonEncode({'latitud': latitud, 'longitud': longitud}),
+          )
+          .timeout(const Duration(seconds: 10));
+    } catch (e) {
+      debugPrint('[TecnicoAsignacionesService] reportarUbicacion ERROR: $e');
+    }
+  }
+
   /// Inicia el envío periódico de ubicación (cada 30 segundos).
   void iniciarSeguimientoUbicacion() {
     _locationTimer?.cancel();

@@ -10,6 +10,8 @@ import 'package:latlong2/latlong.dart';
 
 import 'package:app_emergencias/theme/app_colors.dart';
 
+import '../services/tecnico_asignaciones_service.dart';
+
 /// Vista de ruta estilo "delivery" para el tecnico.
 ///
 /// Muestra la ubicacion del cliente, la posicion propia del tecnico en vivo
@@ -45,6 +47,7 @@ class _TecnicoRutaScreenState extends State<TecnicoRutaScreen> {
   static const double _umbralRecalculoMetros = 120.0;
 
   final MapController _mapController = MapController();
+  final TecnicoAsignacionesService _asignacionesService = TecnicoAsignacionesService();
 
   StreamSubscription<Position>? _posSub;
   bool _mapaListo = false;
@@ -181,6 +184,9 @@ class _TecnicoRutaScreenState extends State<TecnicoRutaScreen> {
 
     if (esPrimerFix || desplazamiento >= _umbralRecalculoMetros) {
       _calcularRuta(tecnico);
+      // Reporta esta MISMA posicion al backend para que el ETA que ve el cliente
+      // se calcule desde aqui y coincida con el que ve el tecnico.
+      _asignacionesService.reportarUbicacion(tecnico.latitude, tecnico.longitude);
     }
   }
 
