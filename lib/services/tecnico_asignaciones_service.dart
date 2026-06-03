@@ -370,72 +370,23 @@ class TecnicoAsignacionesService {
   }
 
   /// Reporta una ubicacion concreta (la que ya tiene la pantalla de ruta) al
-  /// backend, para que el ETA en vivo se calcule desde la MISMA posicion del
-  /// tecnico y todas las vistas (tecnico y cliente) muestren el mismo valor.
-  ///
-  /// Devuelve el Map de respuesta del backend (con eta_minutos / eta_segundos /
-  /// distancia_km) cuando la peticion es exitosa, o null si hubo error.
-  Future<Map<String, dynamic>?> reportarUbicacion(
-    double latitud,
-    double longitud,
-    int idAsignacion,
-  ) async {
+  /// backend, para que el ETA que ve el CLIENTE se calcule desde la MISMA
+  /// posicion en vivo del tecnico y coincida con la que ve el tecnico.
+  Future<void> reportarUbicacion(double latitud, double longitud) async {
     try {
       final token = await _resolverTokenTecnico();
-      final response = await http
-          .post(
-            Uri.parse('$_baseUrl/tecnicos/me/ubicacion'),
+      await http
+          .put(
+            Uri.parse('$_baseUrl/tecnicos/mi-ubicacion'),
             headers: {
               'Content-Type': 'application/json',
               'Authorization': 'Bearer $token',
             },
-            body: jsonEncode({
-              'latitud': latitud,
-              'longitud': longitud,
-              'id_asignacion': idAsignacion,
-            }),
+            body: jsonEncode({'latitud': latitud, 'longitud': longitud}),
           )
           .timeout(const Duration(seconds: 10));
-
-      if (response.statusCode == 200) {
-        return jsonDecode(response.body) as Map<String, dynamic>;
-      }
-      debugPrint(
-        '[TecnicoAsignacionesService] reportarUbicacion '
-        'status=${response.statusCode} body=${response.body}',
-      );
-      return null;
     } catch (e) {
       debugPrint('[TecnicoAsignacionesService] reportarUbicacion ERROR: $e');
-      return null;
-    }
-  }
-
-  /// Obtiene el ETA en vivo de una asignacion desde el backend (el mismo que
-  /// calcula a partir de la ultima ubicacion reportada por el tecnico).
-  ///
-  /// Devuelve el Map con distancia_km / eta_segundos / eta_minutos, o null si
-  /// el backend responde 404 (sin ubicacion aun) u otro error.
-  Future<Map<String, dynamic>?> obtenerEtaAsignacion(int idAsignacion) async {
-    try {
-      final token = await _resolverTokenTecnico();
-      final response = await http
-          .get(
-            Uri.parse('$_baseUrl/asignaciones/$idAsignacion/eta'),
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': 'Bearer $token',
-            },
-          )
-          .timeout(const Duration(seconds: 10));
-
-      if (response.statusCode == 200) {
-        return jsonDecode(response.body) as Map<String, dynamic>;
-      }
-      return null;
-    } catch (e) {
-      debugPrint('[TecnicoAsignacionesService] obtenerEtaAsignacion ERROR: $e');
-      return null;
     }
   }
 

@@ -28,11 +28,6 @@ class _TecnicoDashboardScreenState extends State<TecnicoDashboardScreen> {
 
   AsignacionResponse? _asignacion;
   IncidenteResponse? _incidente;
-  // ETA en vivo consultado periodicamente al backend, para que la tarjeta
-  // muestre el MISMO valor que ve el resto de las vistas (no el snapshot
-  // estatico de la asignacion). Es null hasta que llega la primera respuesta.
-  int? _etaEnVivo;
-  Timer? _etaTimer;
   bool _isLoading = true;
   String? _errorMessage;
   List<Evidencia> _evidencias = [];
@@ -67,43 +62,8 @@ class _TecnicoDashboardScreenState extends State<TecnicoDashboardScreen> {
   @override
   void dispose() {
     _rtSub?.cancel();
-    _etaTimer?.cancel();
     _tecnicoService.detenerSeguimientoUbicacion();
     super.dispose();
-  }
-
-  /// Estados en los que el tecnico va en camino y tiene sentido consultar el
-  /// ETA en vivo de la asignacion.
-  static const _estadosConEta = {'aceptada', 'en_camino', 'llegado'};
-
-  /// Arranca (o reinicia) el sondeo periodico del ETA en vivo cada 8s. Cancela
-  /// cualquier timer previo y limpia el ETA cacheado para no mezclar valores de
-  /// una asignacion anterior.
-  void _iniciarEtaEnVivo() {
-    _etaTimer?.cancel();
-    _etaEnVivo = null;
-    final asignacion = _asignacion;
-    if (asignacion == null) return;
-
-    Future<void> consultar() async {
-      final actual = _asignacion;
-      if (actual == null) return;
-      final resp = await _tecnicoService.obtenerEtaAsignacion(actual.idAsignacion);
-      if (!mounted) return;
-      final eta = (resp?['eta_minutos'] as num?)?.toInt();
-      if (eta == null) return;
-      setState(() => _etaEnVivo = eta);
-    }
-
-    consultar();
-    _etaTimer = Timer.periodic(const Duration(seconds: 8), (_) => consultar());
-  }
-
-  /// Detiene el sondeo del ETA en vivo y limpia el valor cacheado.
-  void _detenerEtaEnVivo() {
-    _etaTimer?.cancel();
-    _etaTimer = null;
-    _etaEnVivo = null;
   }
 
   Future<void> _loadAsignacion() async {
@@ -118,7 +78,6 @@ class _TecnicoDashboardScreenState extends State<TecnicoDashboardScreen> {
       final asig = await _tecnicoService.getAsignacionActual();
       if (asig == null) {
         _log('_loadAsignacion -> sin asignacion activa (null)');
-        _detenerEtaEnVivo();
         setState(() {
           _asignacion = null;
           _incidente = null;
@@ -151,15 +110,6 @@ class _TecnicoDashboardScreenState extends State<TecnicoDashboardScreen> {
         _tecnicoService.iniciarSeguimientoUbicacion();
       } else {
         _tecnicoService.detenerSeguimientoUbicacion();
-      }
-
-      // El ETA en vivo se sondea mientras el tecnico va en camino (aceptada /
-      // en_camino / llegado). Reiniciamos el timer en cada recarga para que use
-      // siempre la asignacion vigente.
-      if (_estadosConEta.contains(asig.estadoAsignacion)) {
-        _iniciarEtaEnVivo();
-      } else {
-        _detenerEtaEnVivo();
       }
 
       // Cargar evidencias del incidente
@@ -498,7 +448,6 @@ class _TecnicoDashboardScreenState extends State<TecnicoDashboardScreen> {
       MaterialPageRoute(
         builder: (_) => TecnicoRutaScreen(
           idIncidente: incidente.idIncidente,
-          idAsignacion: _asignacion!.idAsignacion,
           clienteLat: incidente.latitud,
           clienteLng: incidente.longitud,
         ),
@@ -836,13 +785,11 @@ class _TecnicoDashboardScreenState extends State<TecnicoDashboardScreen> {
                 ),
               ),
               const SizedBox(height: 16),
-              if ((_etaEnVivo ?? _asignacion!.etaMinutos) != null)
+              if (_asignacion!.etaMinutos != null)
                 Card(
                   child: Padding(
                     padding: const EdgeInsets.all(12),
-                    child: Text(
-                      'ETA: ${_etaEnVivo ?? _asignacion!.etaMinutos} minutos',
-                    ),
+                    child: Text('ETA: ${_asignacion!.etaMinutos} minutos'),
                   ),
                 ),
               const SizedBox(height: 16),
