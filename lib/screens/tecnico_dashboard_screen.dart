@@ -326,6 +326,10 @@ class _TecnicoDashboardScreenState extends State<TecnicoDashboardScreen> {
                   );
                   return;
                 }
+                // Capturamos el messenger ANTES de cerrar el dialogo: tras el
+                // Navigator.pop el context del dialogo queda desactivado y
+                // ScaffoldMessenger.of(context) lanzaria "deactivated widget".
+                final messenger = ScaffoldMessenger.of(context);
                 Navigator.pop(context);
                 setState(() => _accionEnCurso = true);
                 try {
@@ -345,16 +349,14 @@ class _TecnicoDashboardScreenState extends State<TecnicoDashboardScreen> {
                   _tecnicoService.detenerSeguimientoUbicacion();
 
                   if (!mounted) return;
-                  // ignore: use_build_context_synchronously
-                  ScaffoldMessenger.of(context).showSnackBar(
+                  messenger.showSnackBar(
                     const SnackBar(content: Text('Servicio completado.')),
                   );
                 } catch (e, st) {
                   _log('_handleCompletar -> ERROR: $e');
                   _log('_handleCompletar -> STACK: $st');
                   if (!mounted) return;
-                  // ignore: use_build_context_synchronously
-                  ScaffoldMessenger.of(context).showSnackBar(
+                  messenger.showSnackBar(
                     SnackBar(content: Text(_mapError(e))),
                   );
                 } finally {
