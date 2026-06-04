@@ -10,6 +10,7 @@ import '../services/adenda_service.dart';
 import '../services/realtime_service.dart';
 import '../widgets/adenda_pendiente_card.dart';
 import '../widgets/cancelar_button.dart';
+import 'mensajes_screen.dart';
 
 class ClienteTrackingScreen extends StatefulWidget {
   final int idIncidente;
@@ -160,6 +161,19 @@ class _ClienteTrackingScreenState extends State<ClienteTrackingScreen> {
             ),
           ],
         ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.chat_bubble_outline),
+            tooltip: 'Mensaje al taller',
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) =>
+                    MensajesScreen(idIncidente: widget.idIncidente),
+              ),
+            ),
+          ),
+        ],
       ),
       body: Stack(
         children: [

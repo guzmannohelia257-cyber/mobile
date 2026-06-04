@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import 'package:app_emergencias/theme/app_colors.dart';
 import '../services/realtime_service.dart';
+import 'mensajes_screen.dart';
 
 class EsperandoTallerScreen extends StatefulWidget {
   final int idIncidente;
@@ -171,6 +172,18 @@ class _EsperandoTallerScreenState extends State<EsperandoTallerScreen>
                 color: Colors.blue.shade700,
                 fontFeatures: const [FontFeature.tabularFigures()],
               ),
+            ),
+            const SizedBox(height: 28),
+            OutlinedButton.icon(
+              onPressed: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) =>
+                      MensajesScreen(idIncidente: widget.idIncidente),
+                ),
+              ),
+              icon: const Icon(Icons.chat_bubble_outline),
+              label: const Text('Mensaje al taller'),
             ),
           ],
         ),
