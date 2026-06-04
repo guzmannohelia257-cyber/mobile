@@ -6,6 +6,7 @@ import 'package:audioplayers/audioplayers.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:uuid/uuid.dart';
 import '../services/incidente_service.dart';
+import '../services/offline/wizard_draft_service.dart';
 import '../models/evidencia.dart';
 import '../models/incidente.dart';
 import '../models/categoria.dart';
@@ -31,6 +32,9 @@ class SubirEvidenciaScreen extends StatefulWidget {
   final String? descripcionUsuario;
   final double? latitud;
   final double? longitud;
+  // Reanudar: key idempotente estable y evidencias locales ya capturadas.
+  final String? idempotencyKey;
+  final List<WizardEvidencia> evidenciasIniciales;
 
   const SubirEvidenciaScreen({
     super.key,
@@ -39,6 +43,8 @@ class SubirEvidenciaScreen extends StatefulWidget {
     this.descripcionUsuario,
     this.latitud,
     this.longitud,
+    this.idempotencyKey,
+    this.evidenciasIniciales = const [],
   }) : assert(
           idIncidente != null ||
               (idVehiculo != null &&
@@ -69,10 +75,12 @@ class _SubirEvidenciaScreenState extends State<SubirEvidenciaScreen> {
   bool subiendo = false;
   bool grabando = false;
   bool reportando = false;
+  final _draftService = WizardDraftService();
   // Idempotency key estable para esta sesión de reporte: si el usuario
   // hace doble tap o pierde conexión y reintenta, el backend devuelve el
-  // mismo incidente sin duplicar.
-  late final String _idempotencyKey = const Uuid().v4();
+  // mismo incidente sin duplicar. Se reusa al reanudar.
+  late final String _idempotencyKey =
+      widget.idempotencyKey ?? const Uuid().v4();
 
   @override
   void initState() {
@@ -80,7 +88,32 @@ class _SubirEvidenciaScreenState extends State<SubirEvidenciaScreen> {
     if (!widget.esNuevoReporte) {
       cargando = true;
       _cargarEvidencias();
+    } else {
+      // Reanudar: restaura las evidencias locales que aun existan en disco.
+      for (final ev in widget.evidenciasIniciales) {
+        final f = File(ev.ruta);
+        if (f.existsSync()) {
+          pendientes.add(_PendingEvidencia(f, ev.tipo));
+        }
+      }
+      _persistirPaso2();
     }
+  }
+
+  /// Guarda el progreso (paso 2 = evidencias) para reanudar el reporte.
+  void _persistirPaso2() {
+    if (!widget.esNuevoReporte) return;
+    _draftService.guardar(WizardDraft(
+      paso: 2,
+      idVehiculo: widget.idVehiculo,
+      descripcion: widget.descripcionUsuario,
+      latitud: widget.latitud,
+      longitud: widget.longitud,
+      idempotencyKey: _idempotencyKey,
+      evidencias: pendientes
+          .map((p) => WizardEvidencia(p.archivo.path, p.tipo))
+          .toList(),
+    ));
   }
 
   @override
@@ -149,6 +182,7 @@ class _SubirEvidenciaScreenState extends State<SubirEvidenciaScreen> {
       setState(() {
         pendientes.add(_PendingEvidencia(archivo, tipo));
       });
+      _persistirPaso2();
       _mostrarInfo('Evidencia agregada (${pendientes.length})');
       return;
     }
@@ -325,6 +359,19 @@ class _SubirEvidenciaScreenState extends State<SubirEvidenciaScreen> {
     }
 
     if (!mounted) return;
+
+    // Progreso paso 3: el borrador ya existe y la categoria esta lista; al
+    // reanudar se reabre directamente la seleccion de taller.
+    _draftService.guardar(WizardDraft(
+      paso: 3,
+      idVehiculo: widget.idVehiculo,
+      descripcion: widget.descripcionUsuario,
+      latitud: widget.latitud,
+      longitud: widget.longitud,
+      idIncidente: incidenteActualizado.idIncidente,
+      categoriaId: idCategoria,
+      idempotencyKey: _idempotencyKey,
+    ));
 
     // 5) 🏪 Mostrar pantalla de selección de talleres
     await Navigator.push(

@@ -4,6 +4,7 @@ import 'package:app_emergencias/theme/app_colors.dart';
 import '../models/categoria.dart';
 import '../models/taller.dart';
 import '../services/incidente_service.dart';
+import '../services/offline/wizard_draft_service.dart';
 import '../services/taller_service.dart';
 
 /// Pantalla M1: cliente ve talleres compatibles con la categoria detectada
@@ -47,9 +48,12 @@ class _SeleccionarTallerScreenState extends State<SeleccionarTallerScreen> {
   @override
   void dispose() {
     // Si el cliente sale sin elegir taller, descartamos el borrador
-    // para que no aparezca como "pendiente" en su historial.
+    // para que no aparezca como "pendiente" en su historial. Tambien limpiamos
+    // el draft de reanudacion (salida explicita = no reanudar). Si la app se
+    // cierra/mata, dispose NO se llama y el draft sobrevive para reanudar.
     if (!_tallerConfirmado && widget.idIncidente != null) {
       _incidenteService.descartarBorrador(widget.idIncidente!);
+      WizardDraftService().limpiar();
     }
     super.dispose();
   }
@@ -140,8 +144,10 @@ class _SeleccionarTallerScreenState extends State<SeleccionarTallerScreen> {
     }
 
     // Una vez confirmado, el borrador ya es 'pendiente' en el backend y
-    // por tanto no debe descartarse en dispose().
+    // por tanto no debe descartarse en dispose(). El reporte termino: ya no
+    // hay nada que reanudar.
     _tallerConfirmado = true;
+    WizardDraftService().limpiar();
 
     if (widget.categoria.requiereCotizacion) {
       Navigator.pushReplacementNamed(

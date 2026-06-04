@@ -1,11 +1,16 @@
 import 'package:flutter/material.dart';
 import '../services/auth_service.dart';
+import '../services/incidente_service.dart';
+import '../services/taller_service.dart';
 import '../services/vehiculo_service.dart';
+import '../services/offline/wizard_draft_service.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_theme.dart';
 import '../widgets/brand_mark.dart';
 import '../widgets/connection_badge.dart';
 import 'reportar_emergencia_screen.dart';
+import 'seleccionar_taller_screen.dart';
+import 'subir_evidencia_screen.dart';
 
 class ConductorHomeScreen extends StatefulWidget {
   const ConductorHomeScreen({super.key});
@@ -23,6 +28,125 @@ class _ConductorHomeScreenState extends State<ConductorHomeScreen> {
   void initState() {
     super.initState();
     _loadUserData();
+    // Tras abrir, si hay un reporte a medias, ofrecer reanudarlo.
+    WidgetsBinding.instance.addPostFrameCallback((_) => _checkReporteEnCurso());
+  }
+
+  /// Si quedo un reporte sin terminar, pregunta si continuar y reanuda el paso.
+  Future<void> _checkReporteEnCurso() async {
+    final draft = await WizardDraftService().cargar();
+    if (draft == null || !mounted) return;
+
+    final continuar = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Reporte sin terminar'),
+        content: const Text(
+          'Tienes un reporte de emergencia a medias. '
+          '¿Quieres continuar donde lo dejaste?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Descartar'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Continuar'),
+          ),
+        ],
+      ),
+    );
+
+    if (!mounted) return;
+    if (continuar == true) {
+      await _reanudarReporte(draft);
+    } else if (continuar == false) {
+      if (draft.idIncidente != null) {
+        IncidenteService().descartarBorrador(draft.idIncidente!);
+      }
+      await WizardDraftService().limpiar();
+    }
+    // Si cerro el dialogo sin elegir, el draft se conserva para la proxima.
+  }
+
+  Future<void> _reanudarReporte(WizardDraft d) async {
+    // Paso 3: el borrador ya existe y la categoria esta lista -> elegir taller.
+    if (d.paso == 3 &&
+        d.idIncidente != null &&
+        d.categoriaId != null &&
+        d.latitud != null &&
+        d.longitud != null) {
+      try {
+        final categoria = await TallerService().getCategoria(d.categoriaId!);
+        if (!mounted) return;
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => SeleccionarTallerScreen(
+              categoria: categoria,
+              latitud: d.latitud!,
+              longitud: d.longitud!,
+              idIncidente: d.idIncidente,
+            ),
+          ),
+        );
+      } catch (_) {
+        await WizardDraftService().limpiar();
+      }
+      return;
+    }
+
+    // Paso 2: pantalla de evidencias con los datos del formulario.
+    if (d.paso == 2 &&
+        d.idVehiculo != null &&
+        d.descripcion != null &&
+        d.latitud != null &&
+        d.longitud != null) {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => SubirEvidenciaScreen(
+            idVehiculo: d.idVehiculo,
+            descripcionUsuario: d.descripcion,
+            latitud: d.latitud,
+            longitud: d.longitud,
+            idempotencyKey: d.idempotencyKey,
+            evidenciasIniciales: d.evidencias,
+          ),
+        ),
+      );
+      return;
+    }
+
+    // Paso 1 (o datos insuficientes): reabrir el formulario con lo que haya.
+    final vehiculos = await _obtenerVehiculos();
+    if (!mounted) return;
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ReportarEmergenciaScreen(
+          vehiculos: vehiculos ?? const [],
+          idVehiculoInicial: d.idVehiculo,
+          descripcionInicial: d.descripcion,
+          latitudInicial: d.latitud,
+          longitudInicial: d.longitud,
+          ubicacionTextoInicial: d.ubicacionTexto,
+          idempotencyKey: d.idempotencyKey,
+        ),
+      ),
+    );
+  }
+
+  Future<List<Map<String, dynamic>>?> _obtenerVehiculos() async {
+    final resultado = await VehiculoService().listarMisVehiculos();
+    if (resultado['success'] == true) {
+      return List<Map<String, dynamic>>.from(
+        (resultado['vehiculos'] as List? ?? [])
+            .map((v) => Map<String, dynamic>.from(v as Map)),
+      );
+    }
+    return null;
   }
 
   Future<void> _loadUserData() async {

@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:uuid/uuid.dart';
 import '../services/incidente_service.dart';
+import '../services/offline/wizard_draft_service.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_theme.dart';
 import 'subir_evidencia_screen.dart';
@@ -7,7 +9,24 @@ import 'subir_evidencia_screen.dart';
 class ReportarEmergenciaScreen extends StatefulWidget {
   final List<Map<String, dynamic>> vehiculos;
 
-  const ReportarEmergenciaScreen({super.key, this.vehiculos = const []});
+  // Prefill para reanudar un reporte a medias (paso 1 = formulario).
+  final int? idVehiculoInicial;
+  final String? descripcionInicial;
+  final double? latitudInicial;
+  final double? longitudInicial;
+  final String? ubicacionTextoInicial;
+  final String? idempotencyKey;
+
+  const ReportarEmergenciaScreen({
+    super.key,
+    this.vehiculos = const [],
+    this.idVehiculoInicial,
+    this.descripcionInicial,
+    this.latitudInicial,
+    this.longitudInicial,
+    this.ubicacionTextoInicial,
+    this.idempotencyKey,
+  });
 
   @override
   State<ReportarEmergenciaScreen> createState() =>
@@ -16,9 +35,14 @@ class ReportarEmergenciaScreen extends StatefulWidget {
 
 class _ReportarEmergenciaScreenState extends State<ReportarEmergenciaScreen> {
   final incidenteService = IncidenteService();
+  final _draftService = WizardDraftService();
   final _formKey = GlobalKey<FormState>();
 
   late TextEditingController _descripcionController;
+  // Idempotency key estable desde el paso 1: se reusa al reanudar para que el
+  // backend no duplique el incidente.
+  late final String _idempotencyKey =
+      widget.idempotencyKey ?? const Uuid().v4();
 
   int? vehiculoSeleccionado;
   double? latitud;
@@ -30,7 +54,25 @@ class _ReportarEmergenciaScreenState extends State<ReportarEmergenciaScreen> {
   @override
   void initState() {
     super.initState();
-    _descripcionController = TextEditingController();
+    _descripcionController =
+        TextEditingController(text: widget.descripcionInicial ?? '');
+    vehiculoSeleccionado = widget.idVehiculoInicial;
+    latitud = widget.latitudInicial;
+    longitud = widget.longitudInicial;
+    ubicacionTexto = widget.ubicacionTextoInicial;
+  }
+
+  /// Guarda el progreso (paso 1) para poder reanudar el reporte mas tarde.
+  void _persistirPaso1() {
+    _draftService.guardar(WizardDraft(
+      paso: 1,
+      idVehiculo: vehiculoSeleccionado,
+      descripcion: _descripcionController.text.trim(),
+      latitud: latitud,
+      longitud: longitud,
+      ubicacionTexto: ubicacionTexto,
+      idempotencyKey: _idempotencyKey,
+    ));
   }
 
   @override
@@ -54,6 +96,7 @@ class _ReportarEmergenciaScreenState extends State<ReportarEmergenciaScreen> {
             '${resultado['latitud']?.toStringAsFixed(4)}, ${resultado['longitud']?.toStringAsFixed(4)}';
         errorGeneral = null;
       });
+      _persistirPaso1();
 
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -95,6 +138,17 @@ class _ReportarEmergenciaScreenState extends State<ReportarEmergenciaScreen> {
       return;
     }
 
+    // Avanza el progreso al paso 2 (evidencias) antes de navegar.
+    _draftService.guardar(WizardDraft(
+      paso: 2,
+      idVehiculo: vehiculoSeleccionado,
+      descripcion: _descripcionController.text.trim(),
+      latitud: latitud,
+      longitud: longitud,
+      ubicacionTexto: ubicacionTexto,
+      idempotencyKey: _idempotencyKey,
+    ));
+
     Navigator.push(
       context,
       MaterialPageRoute(
@@ -103,6 +157,7 @@ class _ReportarEmergenciaScreenState extends State<ReportarEmergenciaScreen> {
           descripcionUsuario: _descripcionController.text.trim(),
           latitud: latitud!,
           longitud: longitud!,
+          idempotencyKey: _idempotencyKey,
         ),
       ),
     );
@@ -167,7 +222,10 @@ class _ReportarEmergenciaScreenState extends State<ReportarEmergenciaScreen> {
                       }).toList(),
                 onChanged: widget.vehiculos.isEmpty
                     ? null
-                    : (v) => setState(() => vehiculoSeleccionado = v),
+                    : (v) {
+                        setState(() => vehiculoSeleccionado = v);
+                        _persistirPaso1();
+                      },
                 validator: (v) =>
                     v == null ? 'Selecciona un vehículo' : null,
               ),
@@ -179,6 +237,7 @@ class _ReportarEmergenciaScreenState extends State<ReportarEmergenciaScreen> {
                 controller: _descripcionController,
                 maxLines: 5,
                 minLines: 4,
+                onChanged: (_) => _persistirPaso1(),
                 decoration: const InputDecoration(
                   hintText:
                       'Describe el problema. Por ejemplo: el motor no enciende, hay una llanta pinchada en la rueda delantera derecha…',

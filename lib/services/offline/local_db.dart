@@ -9,8 +9,37 @@ class LocalDB {
     if (_db != null) return _db!;
     final dir = await getApplicationDocumentsDirectory();
     final dbPath = join(dir.path, 'flujo_emergencia.db');
-    _db = await openDatabase(dbPath, version: 1, onCreate: _onCreate);
+    _db = await openDatabase(
+      dbPath,
+      version: 2,
+      onCreate: _onCreate,
+      onUpgrade: _onUpgrade,
+    );
     return _db!;
+  }
+
+  /// SQL de la tabla que guarda el reporte en curso (para reanudar donde quedo).
+  static const String _wizardDraftSql = '''
+    CREATE TABLE IF NOT EXISTS wizard_draft (
+      id INTEGER PRIMARY KEY,
+      paso INTEGER NOT NULL,
+      id_vehiculo INTEGER,
+      descripcion TEXT,
+      latitud REAL,
+      longitud REAL,
+      ubicacion_texto TEXT,
+      id_incidente INTEGER,
+      idempotency_key TEXT,
+      categoria_id INTEGER,
+      evidencias_json TEXT,
+      updated_at TEXT NOT NULL
+    );
+  ''';
+
+  static Future<void> _onUpgrade(Database db, int oldV, int newV) async {
+    if (oldV < 2) {
+      await db.execute(_wizardDraftSql);
+    }
   }
 
   static Future<void> _onCreate(Database db, int v) async {
@@ -58,6 +87,8 @@ class LocalDB {
 
     await db.execute('CREATE INDEX ix_outbox_created ON outbox(created_at);');
     await db.execute('CREATE INDEX ix_incidentes_created ON incidentes(created_at);');
+
+    await db.execute(_wizardDraftSql);
   }
 
   static Future<void> close() async {
