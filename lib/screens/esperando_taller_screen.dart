@@ -122,16 +122,12 @@ class _EsperandoTallerScreenState extends State<EsperandoTallerScreen>
     if (evt.event == 'incidente.asignado' &&
         evt.data?['id_incidente'] == widget.idIncidente) {
       _navegando = true;
-      final data = evt.data ?? {};
+      // El taller acepto: llevar al historial y abrir el detalle del incidente
+      // (desde ahi el cliente ve tecnico, mensajes y evidencias).
       Navigator.pushReplacementNamed(
         context,
-        '/cliente-tracking',
-        arguments: {
-          'id_incidente': widget.idIncidente,
-          'id_asignacion': data['id_asignacion'],
-          'taller': data['taller'],
-          'ubicacion_incidente': data['ubicacion_incidente'],
-        },
+        '/historial-emergencias',
+        arguments: widget.idIncidente,
       );
     }
   }

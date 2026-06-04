@@ -9,7 +9,11 @@ import 'tecnico_tracking_screen.dart';
 import '../widgets/cancelar_button.dart';
 
 class HistorialEmergenciasScreen extends StatefulWidget {
-  const HistorialEmergenciasScreen({super.key});
+  /// Si viene, al cargar se abre automaticamente el detalle de ese incidente
+  /// (p. ej. cuando el taller acaba de aceptar).
+  final int? abrirDetalle;
+
+  const HistorialEmergenciasScreen({super.key, this.abrirDetalle});
 
   @override
   State<HistorialEmergenciasScreen> createState() =>
@@ -23,6 +27,7 @@ class _HistorialEmergenciasScreenState
   List<IncidenteDetalle> incidencias = [];
   bool cargando = true;
   String? error;
+  bool _detalleAbierto = false;
 
   @override
   void initState() {
@@ -40,6 +45,7 @@ class _HistorialEmergenciasScreenState
         incidencias = resultado['incidencias'] ?? [];
         error = null;
       });
+      _abrirDetalleSiCorresponde();
     } else {
       setState(() => error = resultado['error']);
       if (resultado['code'] == 'AUTH_EXPIRED') {
@@ -48,6 +54,26 @@ class _HistorialEmergenciasScreenState
     }
 
     setState(() => cargando = false);
+  }
+
+  /// Abre una sola vez el detalle del incidente indicado en widget.abrirDetalle
+  /// (p. ej. cuando el taller acaba de aceptar y se llega desde la espera).
+  void _abrirDetalleSiCorresponde() {
+    final id = widget.abrirDetalle;
+    if (id == null || _detalleAbierto) return;
+    IncidenteDetalle? objetivo;
+    for (final i in incidencias) {
+      if (i.idIncidente == id) {
+        objetivo = i;
+        break;
+      }
+    }
+    if (objetivo == null) return;
+    _detalleAbierto = true;
+    final inc = objetivo;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _showDetailDialog(context, inc);
+    });
   }
 
   Color _getColorEstado(int idEstado) {
@@ -314,6 +340,15 @@ class _HistorialEmergenciasScreenState
               : null;
           final tieneTallerConfirmado = asigActiva != null &&
               estadosAsigActivos.contains(asigActiva.estado.nombre.toLowerCase());
+          // El chat con el taller esta disponible desde 'pendiente' hasta
+          // 'llegado' (no en completada/cancelada/rechazada).
+          const estadosConChat = {
+            'pendiente', 'aceptada', 'en_camino', 'llegado'
+          };
+          final puedeMensajear = inc.asignaciones != null &&
+              inc.asignaciones!.any(
+                (a) => estadosConChat.contains(a.estado.nombre.toLowerCase()),
+              );
           // El cliente puede cancelar mientras el servicio sigue en curso
           // (aceptada/en_camino/llegado); si ya esta completada/cancelada, no.
           const estadosCancelables = {'aceptada', 'en_camino', 'llegado'};
@@ -488,7 +523,7 @@ class _HistorialEmergenciasScreenState
                 onPressed: () => Navigator.pop(ctx),
                 child: const Text('Cerrar'),
               ),
-              if (tieneTallerConfirmado)
+              if (puedeMensajear)
                 ElevatedButton.icon(
                   onPressed: () {
                     Navigator.pop(ctx);

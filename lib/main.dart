@@ -114,8 +114,10 @@ class MyApp extends StatelessWidget {
         '/perfil': (context) => const PerfilScreen(),
         '/reportar-emergencia': (context) =>
             const ReportarEmergenciaScreen(vehiculos: []),
-        '/historial-emergencias': (context) =>
-            const HistorialEmergenciasScreen(),
+        '/historial-emergencias': (context) {
+          final abrir = ModalRoute.of(context)?.settings.arguments as int?;
+          return HistorialEmergenciasScreen(abrirDetalle: abrir);
+        },
         '/mis-pagos': (context) => const MisPagosScreen(),
         '/notificaciones': (context) => const NotificacionesScreen(),
         '/calificar-servicio': (context) {
