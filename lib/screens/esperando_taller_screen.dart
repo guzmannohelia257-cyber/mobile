@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import 'package:app_emergencias/theme/app_colors.dart';
 import '../models/categoria.dart';
+import '../models/incidente.dart';
 import '../services/incidente_service.dart';
 import '../services/realtime_service.dart';
 import 'mensajes_screen.dart';
@@ -38,6 +39,7 @@ class _EsperandoTallerScreenState extends State<EsperandoTallerScreen>
 
   int _segundosEspera = 0;
   Timer? _tickTimer;
+  Timer? _pollTimer;
   bool _navegando = false;
 
   /// Reabre la lista de talleres para elegir otro (reasigna el incidente).
@@ -114,22 +116,48 @@ class _EsperandoTallerScreenState extends State<EsperandoTallerScreen>
     });
 
     _timeoutTimer = Timer(const Duration(minutes: 3), _mostrarTimeout);
+    // Respaldo del WS: revisa cada 8 s si el taller ya acepto.
+    _pollTimer = Timer.periodic(
+      const Duration(seconds: 8),
+      (_) => _verificarAceptacion(),
+    );
   }
 
   void _onEvent(WsEvent evt) {
     if (_navegando) return;
-
     if (evt.event == 'incidente.asignado' &&
         evt.data?['id_incidente'] == widget.idIncidente) {
-      _navegando = true;
-      // El taller acepto: llevar al historial y abrir el detalle del incidente
-      // (desde ahi el cliente ve tecnico, mensajes y evidencias).
-      Navigator.pushReplacementNamed(
-        context,
-        '/historial-emergencias',
-        arguments: widget.idIncidente,
-      );
+      _irADetalle();
     }
+  }
+
+  /// El taller acepto: ir al historial y abrir el detalle del incidente (desde
+  /// ahi el cliente ve tecnico, mensajes y evidencias). Idempotente.
+  void _irADetalle() {
+    if (_navegando || !mounted) return;
+    _navegando = true;
+    Navigator.pushReplacementNamed(
+      context,
+      '/historial-emergencias',
+      arguments: widget.idIncidente,
+    );
+  }
+
+  /// Respaldo: si el evento WS no llega (p. ej. solo llego el push FCM), sondea
+  /// el estado del incidente y navega cuando algun taller ya acepto.
+  Future<void> _verificarAceptacion() async {
+    if (_navegando) return;
+    final res = await _incidenteService.obtenerIncidencia(widget.idIncidente);
+    if (!mounted || _navegando) return;
+    if (res['success'] != true) return;
+    final inc = res['incidente'];
+    if (inc is! IncidenteDetalle) return;
+    const activos = {'aceptada', 'en_camino', 'llegado', 'completada'};
+    final aceptado = inc.asignaciones?.any(
+          (a) => activos.contains(a.estado.nombre.toLowerCase()),
+        ) ??
+        false;
+    if (aceptado) _irADetalle();
   }
 
   void _mostrarTimeout() {
@@ -166,6 +194,7 @@ class _EsperandoTallerScreenState extends State<EsperandoTallerScreen>
     _sub?.cancel();
     _pulseCtrl.dispose();
     _tickTimer?.cancel();
+    _pollTimer?.cancel();
     _timeoutTimer?.cancel();
     super.dispose();
   }
