@@ -108,12 +108,15 @@ class RealtimeService {
       cancelOnError: false,
     );
 
-    Future.delayed(const Duration(milliseconds: 200), () {
-      if (_state == WsState.connected || _channel != null) {
-        for (final ch in _subscribed) {
-          _send({'action': 'subscribe', 'channel': ch});
-        }
+    // Si el host no resuelve (sin red) `ready` rechaza con
+    // WebSocketChannelException. Hay que atraparlo o queda como excepcion sin
+    // manejar y crashea. Al fallar, reprogramamos la reconexion.
+    _channel!.ready.then((_) {
+      for (final ch in _subscribed) {
+        _send({'action': 'subscribe', 'channel': ch});
       }
+    }).catchError((Object _) {
+      _onClosed(null);
     });
   }
 
@@ -148,8 +151,12 @@ class RealtimeService {
   }
 
   void _send(Object payload) {
-    if (_channel != null) {
-      _channel!.sink.add(jsonEncode(payload));
+    final ch = _channel;
+    if (ch == null) return;
+    try {
+      ch.sink.add(jsonEncode(payload));
+    } catch (_) {
+      // Socket caido: la reconexion la maneja stream.onError / ready.catchError.
     }
   }
 

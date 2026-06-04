@@ -37,7 +37,6 @@ class _SeleccionarTallerScreenState extends State<SeleccionarTallerScreen> {
   List<TallerCompatible> _talleres = [];
   double _radioKm = 20;
   bool _confirmando = false;
-  bool _tallerConfirmado = false;
 
   @override
   void initState() {
@@ -47,41 +46,49 @@ class _SeleccionarTallerScreenState extends State<SeleccionarTallerScreen> {
 
   @override
   void dispose() {
-    // Si el cliente sale sin elegir taller, descartamos el borrador
-    // para que no aparezca como "pendiente" en su historial. Tambien limpiamos
-    // el draft de reanudacion (salida explicita = no reanudar). Si la app se
-    // cierra/mata, dispose NO se llama y el draft sobrevive para reanudar.
-    if (!_tallerConfirmado && widget.idIncidente != null) {
-      _incidenteService.descartarBorrador(widget.idIncidente!);
-      WizardDraftService().limpiar();
-    }
+    // Volver atras NO descarta el reporte (lleva a evidencias y se puede
+    // reanudar). El descarte solo ocurre con "Cancelar reporte" explicito o al
+    // confirmar un taller.
     super.dispose();
   }
 
   Future<bool> _onWillPop() async {
-    if (_confirmando) return false;
-    if (_tallerConfirmado) return true;
-    final salir = await showDialog<bool>(
+    // "Volver" lleva a la pantalla anterior (evidencias) sin cancelar el reporte.
+    return !_confirmando;
+  }
+
+  /// Cancela el reporte por completo: descarta el borrador, limpia el progreso
+  /// y vuelve al home. Es la unica salida que descarta.
+  Future<void> _cancelarReporte() async {
+    final confirmar = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('¿Cancelar el reporte?'),
         content: const Text(
-          'Si sales ahora no se enviará la solicitud a ningún taller. '
-          'Tu reporte no quedará guardado.',
+          'Se descartará tu reporte y no se enviará a ningún taller.',
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Seguir eligiendo'),
+            child: const Text('No'),
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Sí, salir'),
+            child: const Text('Sí, cancelar'),
           ),
         ],
       ),
     );
-    return salir == true;
+    if (confirmar != true) return;
+    if (widget.idIncidente != null) {
+      await _incidenteService.descartarBorrador(widget.idIncidente!);
+    }
+    await WizardDraftService().limpiar();
+    if (!mounted) return;
+    Navigator.of(context).pushNamedAndRemoveUntil(
+      '/conductor-home',
+      (route) => false,
+    );
   }
 
   Future<void> _cargar() async {
@@ -143,31 +150,23 @@ class _SeleccionarTallerScreenState extends State<SeleccionarTallerScreen> {
       return;
     }
 
-    // Una vez confirmado, el borrador ya es 'pendiente' en el backend y
-    // por tanto no debe descartarse en dispose(). El reporte termino: ya no
-    // hay nada que reanudar.
-    _tallerConfirmado = true;
+    // El reporte se confirmo: ya es 'pendiente' en el backend, ya no hay nada
+    // que reanudar.
     WizardDraftService().limpiar();
 
-    if (widget.categoria.requiereCotizacion) {
-      Navigator.pushReplacementNamed(
-        context,
-        '/cotizaciones',
-        arguments: {
-          'id_incidente': widget.idIncidente,
-          'taller_preferido': t.idTaller,
-        },
-      );
-    } else {
-      Navigator.pushReplacementNamed(
-        context,
-        '/esperando-taller',
-        arguments: {
-          'id_incidente': widget.idIncidente,
-          'taller_preferido': t.idTaller,
-        },
-      );
-    }
+    // Saca el wizard (reportar/evidencias/taller) de la pila: tras confirmar,
+    // "atras" debe llevar al home, no de vuelta al asistente de reporte.
+    final destino =
+        widget.categoria.requiereCotizacion ? '/cotizaciones' : '/esperando-taller';
+    Navigator.pushNamedAndRemoveUntil(
+      context,
+      destino,
+      (route) => route.isFirst,
+      arguments: {
+        'id_incidente': widget.idIncidente,
+        'taller_preferido': t.idTaller,
+      },
+    );
   }
 
   @override
@@ -186,6 +185,13 @@ class _SeleccionarTallerScreenState extends State<SeleccionarTallerScreen> {
             ),
           ],
         ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.close),
+            tooltip: 'Cancelar reporte',
+            onPressed: _confirmando ? null : _cancelarReporte,
+          ),
+        ],
       ),
       body: Column(
         children: [

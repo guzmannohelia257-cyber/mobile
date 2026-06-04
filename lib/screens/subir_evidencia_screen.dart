@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'dart:io';
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:record/record.dart';
@@ -81,6 +83,9 @@ class _SubirEvidenciaScreenState extends State<SubirEvidenciaScreen> {
   // mismo incidente sin duplicar. Se reusa al reanudar.
   late final String _idempotencyKey =
       widget.idempotencyKey ?? const Uuid().v4();
+  // True si el reporte quedo encolado por falta de conexion (modo offline).
+  bool _reporteEncolado = false;
+  StreamSubscription<List<ConnectivityResult>>? _connSub;
 
   @override
   void initState() {
@@ -97,6 +102,41 @@ class _SubirEvidenciaScreenState extends State<SubirEvidenciaScreen> {
         }
       }
       _persistirPaso2();
+
+      // Si el reporte quedo encolado offline, al volver la senal ofrecemos
+      // continuar (crear incidente + IA + elegir taller).
+      _connSub = Connectivity().onConnectivityChanged.listen((results) {
+        final online = results.any((r) => r != ConnectivityResult.none);
+        if (online && _reporteEncolado && mounted && !reportando) {
+          _reporteEncolado = false;
+          _ofrecerSeguirReportando();
+        }
+      });
+    }
+  }
+
+  Future<void> _ofrecerSeguirReportando() async {
+    final seguir = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Señal recuperada'),
+        content: const Text(
+          'Recuperaste la conexión. ¿Deseas continuar con tu reporte?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Ahora no'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Seguir reportando'),
+          ),
+        ],
+      ),
+    );
+    if (seguir == true && mounted) {
+      _reportarIncidente();
     }
   }
 
@@ -118,6 +158,7 @@ class _SubirEvidenciaScreenState extends State<SubirEvidenciaScreen> {
 
   @override
   void dispose() {
+    _connSub?.cancel();
     _recorder.dispose();
     _player.dispose();
     super.dispose();
@@ -273,7 +314,12 @@ class _SubirEvidenciaScreenState extends State<SubirEvidenciaScreen> {
     if (!mounted) return;
 
     if (!creacion['success']) {
-      setState(() => reportando = false);
+      setState(() {
+        reportando = false;
+        // Sin conexion: el reporte quedo en cola; al volver la senal se ofrece
+        // continuar. (El mensaje de "pendiente" lo trae creacion['error'].)
+        _reporteEncolado = creacion['queued'] == true;
+      });
       _mostrarError(creacion['error'] ?? 'No se pudo reportar');
       if (creacion['code'] == 'AUTH_EXPIRED') {
         Navigator.of(context).pushReplacementNamed('/login');
@@ -387,16 +433,11 @@ class _SubirEvidenciaScreenState extends State<SubirEvidenciaScreen> {
     );
 
     if (!mounted) return;
-
-    _mostrarInfo(
-      '✅ Emergencia #$idIncidente reportada. Taller asignado correctamente.',
-    );
-
-    // 6) Volver al home
-    Navigator.of(context).pushNamedAndRemoveUntil(
-      '/conductor-home',
-      (route) => false,
-    );
+    // Volvimos de la seleccion de taller. Si el cliente confirmo, esa pantalla
+    // ya navego (cotizaciones / esperando-taller). Si volvio atras, sigue aqui
+    // en evidencias. NO mostramos "reportada exitosamente" (antes salia aunque
+    // el usuario cancelara) ni forzamos el home.
+    setState(() => reportando = false);
   }
 
   /// Muestra el diálogo de carga mientras la IA analiza el incidente.
