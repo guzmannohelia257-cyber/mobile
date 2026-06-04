@@ -53,7 +53,9 @@ class IncidenteResponse {
       '${latitud.toStringAsFixed(4)}, ${longitud.toStringAsFixed(4)}';
 
   String getFechaFormato() {
-    return DateFormat('dd/MM/yyyy HH:mm').format(createdAt);
+    // El backend guarda la fecha en UTC (sufijo Z); convertimos a hora local
+    // del dispositivo para no mostrarla corrida (p. ej. 9 PM en vez de 5 PM).
+    return DateFormat('dd/MM/yyyy HH:mm').format(createdAt.toLocal());
   }
 }
 
@@ -238,7 +240,9 @@ class IncidenteDetalle {
       '${latitud.toStringAsFixed(4)}, ${longitud.toStringAsFixed(4)}';
 
   String getFechaFormato() {
-    return DateFormat('dd/MM/yyyy HH:mm').format(createdAt);
+    // El backend guarda la fecha en UTC (sufijo Z); convertimos a hora local
+    // del dispositivo para no mostrarla corrida (p. ej. 9 PM en vez de 5 PM).
+    return DateFormat('dd/MM/yyyy HH:mm').format(createdAt.toLocal());
   }
 
   String getNivelPrioridad() {
